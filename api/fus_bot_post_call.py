@@ -101,9 +101,9 @@ async def handle_post_call(request: Request):
         headers = {"Authorization": f"Bearer {access_token}"}
 
         sf_payload = {
-            "Call_Duration__c": f"{duration} seconds",
-            "Call_Status__c": call_status,
-            "Call_Transcript__c": transcript_str
+            "Call Duration": f"{duration} seconds",
+            "Call Status": call_status,
+            "Call Transcript": transcript_str
         }
 
         async with get_client() as client:
