@@ -101,7 +101,7 @@ async def handle_post_call(request: Request):
         headers = {"Authorization": f"Bearer {access_token}"}
 
         sf_payload = {
-            "Call Duration": f"{duration} seconds",
+            "Call Duration": duration,
             "Call Status": call_status,
             "Call Transcript": transcript_str
         }
@@ -113,7 +113,10 @@ async def handle_post_call(request: Request):
             await safe_request(client, "PATCH", update_url, json=sf_payload, headers=headers)
 
             # GET
-            res = await safe_request(client, "GET", update_url, headers=headers)
+            res = await client.patch(update_url, json=sf_payload, headers=headers)
+
+            print("STATUS:", res.status_code)
+            print("RESPONSE:", res.text)
             lead_info = res.json()
 
         # ------------------- GOOGLE SHEETS (ASYNC SAFE) -------------------
