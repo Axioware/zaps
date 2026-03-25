@@ -1,0 +1,52 @@
+
+
+### 1. File: `config/config.py`
+**Action:** Replace the placeholder strings with your actual credentials.
+* [ ] `SF_CLIENT_ID`: Your Salesforce Consumer Key.
+* [ ] `SF_CLIENT_SECRET`: Your Salesforce Consumer Secret.
+* [ ] `SF_REFRESH_TOKEN`: Your Salesforce Refresh Token.
+* [ ] `SF_INSTANCE_URL`: Must be `https://yourdomain.my.salesforce.com` (No trailing slash).
+* [ ] `ELEVEN_LABS_KEY`: Your API Key from ElevenLabs Profile.
+* [ ] `ELEVEN_AGENT_ID`: The ID of your specific AI Agent.
+* [ ] `AREA_CODE_MAP`: Ensure the `phnum_...` IDs match the phone numbers bought/synced in ElevenLabs.
+
+---
+
+### 2. File: `api/fus_bot_new_lead.py`
+**Action:** Check Salesforce Field Names.
+* [ ] `AI_Bot_Last_Modified_Date_Time__c`: Verify this is exactly the API name in Salesforce (Object Manager > Lead > Fields). It must be a **Date/Time** type.
+* [ ] **SOQL Query:** Ensure the `Status` names (`'New Leads'`, `'Hit List'`, `'Discovery'`) match your Salesforce Lead Status picklist values exactly.
+
+---
+
+### 3. File: `api/fus_bot_call_end.py`
+**Action:** Verify ElevenLabs Extraction Keys.
+* [ ] **In ElevenLabs:** Go to your Agent -> Analysis. Ensure you have custom extractions named exactly:
+    1. `change_of_mind_reason`
+    2. `is_interested`
+    3. `callback_time`
+* [ ] **In Salesforce:** Verify `Change_of_Mind_Reason__c`, `Is_Interested_in_Selling__c`, and `Check_Back_Time__c` are the correct API names.
+
+---
+
+### 4. File: `api/fus_bot_post_call.py`
+**Action:** Google Sheets & Salesforce Metadata.
+* [ ] **Sheet Name:** Ensure the Google Sheet is named exactly `"Ai Bot FUS Discovery Call List"`.
+* [ ] **Worksheet Name:** Ensure the tab at the bottom is named exactly `"Call Recording Metrics"`.
+* [ ] **Permissions:** Ensure the email `lead-bot-sheets@neural-aquifer-491215-f2.iam.gserviceaccount.com` is added as an **Editor** to that Google Sheet.
+* [ ] **SF Fields:** Ensure `Call_Duration__c`, `Call_Status__c`, and `Call_Transcript__c` exist in Salesforce. `Call_Transcript__c` should be a **Long Text Area**.
+
+---
+
+### 5. File: `main.py`
+**Action:** Deployment.
+* [ ] **Webhooks:** In ElevenLabs, set the Post-Call Webhook URL to: 
+    `http://YOUR_SERVER_IP:8000/api/callback/call-end` (for Zap 3 logic)
+    `http://YOUR_SERVER_IP:8000/api/callback/post-call` (for Zap 4 logic)
+
+---
+
+### 6. Project Root Folder
+* [ ] **Secret Key:** Create/move `service_account.json` into the root folder.
+* [ ] **Init Files:** Confirm empty `__init__.py` files exist in both `api/` and `config/` folders.
+
