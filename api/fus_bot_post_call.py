@@ -1,112 +1,158 @@
 import logging
 import os
 import httpx
+import asyncio
+import json
+
 import gspread
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException, Header
 from oauth2client.service_account import ServiceAccountCredentials
-from pydantic import json
-from config.config import SF_INSTANCE_URL
+
+from config.config import SF_INSTANCE_URL, ADMIN_SECRET_KEY
 from api.fus_bot_new_lead import get_sf_access_token
 
 Router = APIRouter()
+logger = logging.getLogger("post_call")
 
-# --- GOOGLE SHEETS SETUP ---
+# ------------------- SECURITY -------------------
+def verify_webhook(x_api_key: str = Header(None)):
+    if not x_api_key or x_api_key != ADMIN_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+# ------------------- HTTP CLIENT -------------------
+def get_client():
+    return httpx.AsyncClient(timeout=10.0)
+
+# ------------------- RETRY -------------------
+async def safe_request(client, method, url, **kwargs):
+    for attempt in range(3):
+        try:
+            res = await client.request(method, url, **kwargs)
+            res.raise_for_status()
+            return res
+        except Exception:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(1 * (attempt + 1))
+
+# ------------------- GOOGLE SHEETS (CACHED) -------------------
+_gs_client = None
+
 def get_sheets_client():
-    """Authenticates using service account JSON from env variable."""
-    
+    global _gs_client
+
+    if _gs_client:
+        return _gs_client
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
 
-    # Load JSON from Railway env variable
     service_account_info = json.loads(
-        os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+        os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
     )
+
+    if not service_account_info:
+        raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
 
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
         service_account_info,
         scope
     )
 
-    return gspread.authorize(creds)
+    _gs_client = gspread.authorize(creds)
+    return _gs_client
 
+# ------------------- ROUTE -------------------
 @Router.post("/post-call")
 async def handle_post_call(request: Request):
     try:
         data = await request.json()
-        print(data)
+        logger.info("Post-call webhook received")
 
-        # ✅ FIX: everything is inside "data"
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Invalid payload")
+
         payload = data.get("data", {})
 
-        # 1. Extract Metadata from ElevenLabs Webhook
+        # ------------------- EXTRACT DATA -------------------
         metadata = payload.get("metadata", {})
         duration = int(metadata.get("call_duration_secs", 0))
-        call_status = payload.get("status", "unknown")
+        call_status = str(payload.get("status", "unknown"))
 
-        # ✅ FIX: transcript is a list → convert to string
         transcript = payload.get("transcript", [])
-        import json
-        transcript_str = json.dumps(transcript) if transcript else "No transcript available"
-        
-        # Extract variables passed during call initiation
+        transcript_str = json.dumps(transcript) if transcript else "No transcript"
+
+        # ⚠️ prevent Salesforce field overflow
+        transcript_str = transcript_str[:30000]
+
         custom_data = payload.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
         lead_id = custom_data.get("lead_id")
 
-        # ✅ FIX: conversation_id is inside payload
         conv_id = payload.get("conversation_id")
 
         if not lead_id:
-            logging.error("Post-Call received but no lead_id found.")
-            return {"status": "error", "message": "No lead_id"}
+            raise HTTPException(status_code=400, detail="Missing lead_id")
 
-        # 2. Salesforce Update & Data Enrichment
+        # ------------------- SALESFORCE -------------------
         access_token = await get_sf_access_token()
-        sf_headers = {"Authorization": f"Bearer {access_token}"}
-        
-        # First, update the lead with the final transcript and duration
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+
         sf_payload = {
             "Call_Duration__c": f"{duration} seconds",
             "Call_Status__c": call_status,
-            "Call_Transcript__c": transcript_str  # ✅ FIX applied
+            "Call_Transcript__c": transcript_str
         }
 
-        async with httpx.AsyncClient() as client:
-            # PATCH: Update transcript in Salesforce
+        async with get_client() as client:
             update_url = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
-            await client.patch(update_url, json=sf_payload, headers=sf_headers)
-            
-            # GET: Fetch latest Lead info (to get Name, ACQ Manager, and Tool Results)
-            lead_res = await client.get(update_url, headers=sf_headers)
-            lead_info = lead_res.json()
 
-        # 3. Discovery Call Logic (Only logs to Sheets if call > 3 minutes)
+            # PATCH
+            await safe_request(client, "PATCH", update_url, json=sf_payload, headers=headers)
+
+            # GET
+            res = await safe_request(client, "GET", update_url, headers=headers)
+            lead_info = res.json()
+
+        # ------------------- GOOGLE SHEETS (ASYNC SAFE) -------------------
         if duration > 180:
-            logging.info(f"Call {conv_id} lasted {duration}s. Logging to Google Sheets.")
-            
-            # Open the spreadsheet and specific worksheet
-            gs_client = get_sheets_client()
-            sheet = gs_client.open("Ai Bot FUS Discovery Call List").worksheet("Call Recording Metrics")
-            
-            # Prepare the row exactly as your old Zapier workflow did
-            row = [
-                conv_id,
-                lead_info.get("Name", "N/A"),
-                lead_info.get("Who_manages_the_property__c"),
-                lead_info.get("Address", "N/A"),
-                f"{duration}s",
-                lead_info.get("Change_of_Mind_Reason__c"),
-                lead_info.get("Is_Interested_in_Selling__c"),
-                lead_info.get("Check_Back_Time__c"),
-                f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
-            ]
-            
-            sheet.append_row(row)
-            logging.info(f"Successfully added row to Google Sheet for lead {lead_id}")
+            logger.info(f"Logging to Google Sheets (duration: {duration}s)")
+
+            await asyncio.to_thread(log_to_sheets, lead_info, lead_id, duration, conv_id)
 
         return {"status": "success", "duration": duration}
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        logging.error(f"Post-Call Critical Error: {str(e)}")
-        return {"status": "error", "detail": str(e)}
+        logger.error(f"Post-call error: {str(e)}")
+        return {"status": "error", "message": "Internal error"}
+
+# ------------------- SHEETS FUNCTION -------------------
+def log_to_sheets(lead_info, lead_id, duration, conv_id):
+    try:
+        gs_client = get_sheets_client()
+
+        sheet = gs_client.open("Ai Bot FUS Discovery Call List").worksheet("Call Recording Metrics")
+
+        row = [
+            conv_id,
+            lead_info.get("Name", "N/A"),
+            lead_info.get("Who_manages_the_property__c"),
+            lead_info.get("Address", "N/A"),
+            f"{duration}s",
+            lead_info.get("Change_of_Mind_Reason__c"),
+            lead_info.get("Is_Interested_in_Selling__c"),
+            lead_info.get("Check_Back_Time__c"),
+            f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
+        ]
+
+        sheet.append_row(row)
+
+        logger.info(f"Sheet updated for lead {lead_id}")
+
+    except Exception as e:
+        logger.error(f"Google Sheets error: {str(e)}")

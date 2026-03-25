@@ -1,44 +1,87 @@
 import re
-from fastapi import APIRouter, BackgroundTasks
-import httpx
+import asyncio
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from config.config import *
+
+import httpx
+from fastapi import APIRouter, BackgroundTasks
+
+from config.config import (
+    SF_CLIENT_ID,
+    SF_CLIENT_SECRET,
+    SF_REFRESH_TOKEN,
+    SF_INSTANCE_URL,
+    ELEVEN_LABS_KEY,
+    ELEVEN_AGENT_ID,
+    AREA_CODE_MAP,
+    DEFAULT_PHONE
+)
 from config.database import get_row_limit
 
 Router = APIRouter()
+logger = logging.getLogger("lead_workflow")
 
+# ------------------- ROUTE -------------------
 @Router.post("/trigger")
 async def trigger_webhook(background_tasks: BackgroundTasks):
-    # This now triggers the combined "New then Old" logic
     background_tasks.add_task(run_outbound_workflow)
-    return {"status": "Workflow initiated (New Leads prioritized)"}
+    return {"status": "Workflow started"}
 
+# ------------------- HTTP CLIENT -------------------
+def get_client():
+    return httpx.AsyncClient(timeout=10.0)
+
+# ------------------- RETRY WRAPPER -------------------
+async def safe_request(client, method, url, **kwargs):
+    for attempt in range(3):
+        try:
+            res = await client.request(method, url, **kwargs)
+            res.raise_for_status()
+            return res
+        except Exception as e:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(1 * (attempt + 1))
+
+# ------------------- SALESFORCE TOKEN -------------------
 async def get_sf_access_token():
     url = "https://login.salesforce.com/services/oauth2/token"
-    data = {
-        "grant_type": "refresh_token",
-        "client_id": SF_CLIENT_ID,
-        "client_secret": SF_CLIENT_SECRET,
-        "refresh_token": SF_REFRESH_TOKEN
-    }
-    async with httpx.AsyncClient() as client:
-        res = await client.post(url, data=data)
-        res.raise_for_status()
-        return res.json().get("access_token")
 
+    async with get_client() as client:
+        res = await safe_request(
+            client,
+            "POST",
+            url,
+            data={
+                "grant_type": "refresh_token",
+                "client_id": SF_CLIENT_ID,
+                "client_secret": SF_CLIENT_SECRET,
+                "refresh_token": SF_REFRESH_TOKEN
+            }
+        )
+
+        data = res.json()
+        token = data.get("access_token")
+
+        if not token:
+            raise RuntimeError("Salesforce token missing")
+
+        return token
+
+# ------------------- MAIN WORKFLOW -------------------
 async def run_outbound_workflow():
     try:
         limit = get_row_limit()
         access_token = await get_sf_access_token()
-        
-        async with httpx.AsyncClient() as client:
-            sf_headers = {"Authorization": f"Bearer {access_token}"}
-            query_url = f"{SF_INSTANCE_URL}/services/data/v57.0/query"
 
-            # --- STEP 1: TRY NEW LEADS ---
-            new_leads_soql = f"""
+        headers = {"Authorization": f"Bearer {access_token}"}
+        query_url = f"{SF_INSTANCE_URL}/services/data/v57.0/query"
+
+        async with get_client() as client:
+
+            # ------------------- NEW LEADS -------------------
+            new_query = f"""
             SELECT Id, Phone, Status, CreatedDate, AI_Bot_Last_Modified_Date_Time__c 
             FROM Lead 
             WHERE AI_Bot_Last_Modified_Date_Time__c = null 
@@ -46,14 +89,15 @@ async def run_outbound_workflow():
             AND IsConverted = false 
             ORDER BY CreatedDate ASC LIMIT {limit}
             """
-            
-            res = await client.get(query_url, params={"q": new_leads_soql}, headers=sf_headers)
+
+            res = await safe_request(client, "GET", query_url, params={"q": new_query}, headers=headers)
             leads = res.json().get("records", [])
 
-            # --- STEP 2: FAILOVER TO OLD LEADS IF EMPTY ---
+            # ------------------- FALLBACK -------------------
             if not leads:
-                logging.info("No NEW leads found. Checking for OLD leads...")
-                old_leads_soql = f"""
+                logger.info("No new leads. Checking old leads...")
+
+                old_query = f"""
                 SELECT Id, Phone, Status, CreatedDate, AI_Bot_Last_Modified_Date_Time__c 
                 FROM Lead 
                 WHERE AI_Bot_Last_Modified_Date_Time__c != null 
@@ -61,50 +105,69 @@ async def run_outbound_workflow():
                 AND IsConverted = false 
                 ORDER BY AI_Bot_Last_Modified_Date_Time__c ASC LIMIT {limit}
                 """
-                res = await client.get(query_url, params={"q": old_leads_soql}, headers=sf_headers)
+
+                res = await safe_request(client, "GET", query_url, params={"q": old_query}, headers=headers)
                 leads = res.json().get("records", [])
 
             if not leads:
-                logging.info("No leads (New or Old) found to process.")
+                logger.info("No leads found.")
                 return
 
-            # --- STEP 3: PROCESS THE LEADS ---
-            for lead in leads:
-                # Phone formatting
-                raw_phone = lead.get('Phone', '') or ''
-                digits = re.sub(r'\D', '', raw_phone)
-                if digits.startswith('1') and len(digits) > 10:
-                    digits = digits[1:]
-                
-                if not digits:
-                    continue
-
-                area_code = digits[:3]
-                from_phone = AREA_CODE_MAP.get(area_code, DEFAULT_PHONE)
-
-                # ElevenLabs Outbound Call
-                try:
-                    await client.post(
-                        "https://api.elevenlabs.io/v1/convai/twilio/outbound-call",
-                        json={
-                            "agent_id": ELEVEN_AGENT_ID,
-                            "agent_phone_number_id": from_phone,
-                            "to_number": digits,
-                            "conversation_initiation_client_data": {
-                                "dynamic_variables": {"lead_id": lead['Id'], "address": "See CRM"}
-                            }
-                        },
-                        headers={"xi-api-key": ELEVEN_LABS_KEY}
-                    )
-                    
-                    # Update Salesforce Timestamp
-                    pacific_now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S")
-                    update_url = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead['Id']}"
-                    await client.patch(update_url, json={"AI_Bot_Last_Modified_Date_Time__c": pacific_now}, headers=sf_headers)
-                    
-                    logging.info(f"Successfully processed lead: {lead['Id']}")
-                except Exception as call_err:
-                    logging.error(f"Failed to call lead {lead['Id']}: {str(call_err)}")
+            # ------------------- PROCESS LEADS (PARALLEL) -------------------
+            tasks = [process_lead(client, lead, headers) for lead in leads]
+            await asyncio.gather(*tasks)
 
     except Exception as e:
-        logging.error(f"Workflow Critical Error: {str(e)}")
+        logger.error(f"Workflow failed: {str(e)}")
+
+# ------------------- LEAD PROCESSING -------------------
+async def process_lead(client, lead, headers):
+    try:
+        raw_phone = lead.get("Phone") or ""
+        digits = re.sub(r"\D", "", raw_phone)
+
+        if digits.startswith("1") and len(digits) > 10:
+            digits = digits[1:]
+
+        if not digits:
+            return
+
+        area_code = digits[:3]
+        from_phone = AREA_CODE_MAP.get(area_code, DEFAULT_PHONE)
+
+        # Call API
+        await safe_request(
+            client,
+            "POST",
+            "https://api.elevenlabs.io/v1/convai/twilio/outbound-call",
+            json={
+                "agent_id": ELEVEN_AGENT_ID,
+                "agent_phone_number_id": from_phone,
+                "to_number": digits,
+                "conversation_initiation_client_data": {
+                    "dynamic_variables": {
+                        "lead_id": lead["Id"],
+                        "address": "See CRM"
+                    }
+                }
+            },
+            headers={"xi-api-key": ELEVEN_LABS_KEY}
+        )
+
+        # Update Salesforce
+        pacific_now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S")
+
+        update_url = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead['Id']}"
+
+        await safe_request(
+            client,
+            "PATCH",
+            update_url,
+            json={"AI_Bot_Last_Modified_Date_Time__c": pacific_now},
+            headers=headers
+        )
+
+        logger.info(f"Processed lead {lead['Id']}")
+
+    except Exception as e:
+        logger.error(f"Lead failed {lead.get('Id')}: {str(e)}")
