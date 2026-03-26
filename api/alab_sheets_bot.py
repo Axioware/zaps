@@ -11,12 +11,11 @@ from config.config import (
     ALAB_WORKSHEET_NAME,
     ELEVEN_LABS_KEY,
     ELEVEN_AGENT_ID,
-    AREA_CODE_MAP,
     DEFAULT_PHONE
 )
 from datetime import datetime
 import pytz
-
+AREA_CODE_CACHE = None
 # ---------- LOGGING SETUP ----------
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +26,13 @@ Router = APIRouter()
 
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
 
+def get_area_code_map_cached():
+    global AREA_CODE_CACHE
 
+    if AREA_CODE_CACHE is None:
+        AREA_CODE_CACHE = load_area_code_map()
+
+    return AREA_CODE_CACHE
 # ---------- GOOGLE SHEETS CLIENT ----------
 def get_client():
     logging.info("Initializing Google Sheets client")
@@ -47,6 +52,27 @@ def get_client():
 
     return client
 
+def load_area_code_map():
+    logging.info("Loading area code mapping from Google Sheet")
+
+    client = get_client()
+
+    sheet = client.open_by_key("1MvwpbP9gCsq6ODXTvtqNdWvWiot7iW3SfqmXL6P9Pu8").worksheet("BOT area codes (LIVE)")
+
+    records = sheet.get_all_records()
+
+    area_map = {}
+
+    for row in records:
+        area = str(row.get("Area Code")).strip()
+        phone_id = row.get("Phone Number ID")
+
+        if area and phone_id:
+            area_map[area] = phone_id
+
+    logging.info(f"Loaded {len(area_map)} area mappings")
+
+    return area_map
 
 # ---------- STEP 2 ----------
 def get_leads(limit=5):
@@ -99,13 +125,14 @@ def normalize_phone(valid_phone, mobile_phone):
     return formatted, area
 
 
-# ---------- STEP 5 ----------
 def get_area_mapping(area):
-    logging.info(f"Fetching area mapping for area: {area}")
+    logging.info(f"Fetching dynamic area mapping for: {area}")
 
-    phone_id = AREA_CODE_MAP.get(area, DEFAULT_PHONE)
+    area_map = get_area_code_map_cached()
 
-    logging.info(f"Mapped phone_id: {phone_id}")
+    phone_id = area_map.get(area, DEFAULT_PHONE)
+
+    logging.info(f"Resolved phone_id: {phone_id}")
 
     return phone_id, phone_id
 

@@ -1,7 +1,7 @@
 # (Sensitive files)
 service_account.json
 .env
-
+.venv/
 # Python
 __pycache__/
 *.pyc
