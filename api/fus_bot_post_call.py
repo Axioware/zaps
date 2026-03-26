@@ -167,6 +167,9 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id):
         def safe(val):
             return str(val) if val is not None else ""
 
+        headers = sheet.row_values(1)
+        
+
         row = [
             safe(conv_id),
             safe(lead_info.get("Name")),
@@ -178,6 +181,8 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id):
             safe(lead_info.get("check_back_time__c")),
             f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
         ]
+
+        row = [row.get(col, "") for col in headers]
 
         logger.info(f"Row before append: {row}")
 
