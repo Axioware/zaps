@@ -159,8 +159,8 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id):
     try:
         gs_client = get_sheets_client()
 
-        sheet = gs_client.open("Ai Bot FUS Discovery Call List") \
-                         .worksheet("Copy of Call Recording Metrics")
+        sheet = gs_client.open_by_key("1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok") \
+                 .worksheet("Copy of Call Recording Metrics")
 
         logger.info("Google Sheets client initialized")
 
@@ -174,8 +174,8 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id):
             safe(lead_info.get("Property_Address__c")),
             f"{duration}s",
             safe(lead_info.get("Change_of_Mind_Reason__c")),
-            safe(lead_info.get("Is_Interested__c")),
-            safe(lead_info.get("Checkback_Time__c")),
+            safe(lead_info.get("is_interested_in_selling__c")),
+            safe(lead_info.get("check_back_time__c")),
             f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
         ]
 
