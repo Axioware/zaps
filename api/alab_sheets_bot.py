@@ -39,7 +39,11 @@ def get_leads(limit=5):
     sheet = client.open_by_key("1chCOCUqMtZ-q25b2mV1hiwoyx7jLLePFWPkOcCbr7mU").worksheet(ALAB_WORKSHEET_NAME)
 
     records = sheet.get_all_records()
-    leads = [r for r in records if r.get("Call Disposition") == "None"]
+    leads = []
+    for idx, r in enumerate(records, start=2):
+        if not r.get("Call Disposition"):   # empty cell
+            r["_row"] = idx                # store row number
+            leads.append(r)
 
     return leads[:limit], sheet
 
@@ -105,19 +109,19 @@ def find_row_by_phone(sheet, phone):
     records = sheet.get_all_records()
 
     for idx, r in enumerate(records, start=2):
-        val = str(r.get("VALID_PHONES", "")).replace("+", "")
-        if val == phone:
+        valid = str(r.get("VALID_PHONES", "")).replace("+", "")
+        mobile = str(r.get("MOBILE_PHONE", "")).replace("+", "")
+
+        if phone == valid or phone == mobile:
             return idx
 
     return None
 
-
 # ---------- STEP 10 ----------
 def update_row(sheet, row_id, call_count, called_from):
-    sheet.update(f"O{row_id}", "Not Answered")
-    sheet.update(f"N{row_id}", call_count)
-    sheet.update(f"P{row_id}", called_from)
-
+    sheet.update(f"L{row_id}", [["Not Answered"]])   # Call Disposition
+    sheet.update(f"N{row_id}", [[call_count]])       # Call Count
+    sheet.update(f"S{row_id}", [[called_from]])      # Called From
 
 # ================= MAIN ENDPOINT =================
 
@@ -155,7 +159,7 @@ async def trigger_calls():
 
                 clean_phone = remove_plus(phone)
 
-                call_count = int(lead.get("call_count") or 0) + 1
+                call_count = int(lead.get("Call_Count") or 0) + 1
 
                 row_id = find_row_by_phone(sheet, clean_phone)
 
@@ -233,13 +237,13 @@ async def post_call_update(payload: dict):
         analysis = payload.get("data", {}).get("analysis", {}).get("data_collection_results", {})
         metadata = payload.get("data", {}).get("metadata", {})
 
-        sheet.update(f"O{row_id}", "Answered")
-        sheet.update(f"Q{row_id}", pacific_time)
-        sheet.update(f"R{row_id}", analysis.get("wrong_call", {}).get("value"))
-        sheet.update(f"S{row_id}", analysis.get("Do they want to sell?", {}).get("value"))
-        sheet.update(f"T{row_id}", analysis.get("call_back_time", {}).get("value"))
-        sheet.update(f"U{row_id}", str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used")))
-        sheet.update(f"V{row_id}", metadata.get("call_duration_secs"))
+        sheet.update(f"L{row_id}", [["Answered"]])
+        sheet.update(f"Q{row_id}", [[pacific_time]])
+        sheet.update(f"R{row_id}", [[analysis.get("wrong_call", {}).get("value")]])
+        sheet.update(f"S{row_id}", [[analysis.get("Do they want to sell?", {}).get("value")]])
+        sheet.update(f"T{row_id}", [[analysis.get("call_back_time", {}).get("value")]])
+        sheet.update(f"U{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
+        sheet.update(f"V{row_id}", [[metadata.get("call_duration_secs")]])
 
         return {"status": "updated", "row": row_id}
 
