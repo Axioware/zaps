@@ -15,6 +15,13 @@ from config.config import (
 )
 from datetime import datetime
 import pytz
+
+# ---------- LOGGING SETUP ----------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(funcName)s | %(message)s"
+)
+
 Router = APIRouter()
 
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
@@ -22,6 +29,8 @@ ELEVENLABS_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
 
 # ---------- GOOGLE SHEETS CLIENT ----------
 def get_client():
+    logging.info("Initializing Google Sheets client")
+
     service_account_info = json.loads(
         os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
     )
@@ -32,28 +41,41 @@ def get_client():
                 "https://www.googleapis.com/auth/drive"]
     )
 
-    return gspread.authorize(creds)
+    client = gspread.authorize(creds)
+    logging.info("Google Sheets client initialized successfully")
+
+    return client
+
 
 # ---------- STEP 2 ----------
 def get_leads(limit=5):
+    logging.info(f"Fetching leads with limit={limit}")
+
     client = get_client()
     sheet = client.open_by_key("1chCOCUqMtZ-q25b2mV1hiwoyx7jLLePFWPkOcCbr7mU").worksheet(ALAB_WORKSHEET_NAME)
 
     records = sheet.get_all_records()
+    logging.info(f"Total records fetched: {len(records)}")
+
     leads = []
     for idx, r in enumerate(records, start=2):
-        if not r.get("Call Disposition"):   # empty cell
-            r["_row"] = idx                # store row number
+        if not r.get("Call Disposition"):
+            r["_row"] = idx
             leads.append(r)
+
+    logging.info(f"Filtered leads count: {len(leads)}")
 
     return leads[:limit], sheet
 
 
 # ---------- STEP 4 ----------
 def normalize_phone(valid_phone, mobile_phone):
+    logging.info(f"Normalizing phone | valid: {valid_phone}, mobile: {mobile_phone}")
+
     phone = valid_phone if valid_phone and str(valid_phone).strip() else mobile_phone
 
     if not phone:
+        logging.warning("No phone provided")
         return None, None
 
     phone = re.sub(r"\D", "", str(phone))
@@ -65,21 +87,32 @@ def normalize_phone(valid_phone, mobile_phone):
         phone = "1" + phone
 
     if len(phone) < 11:
+        logging.warning(f"Invalid phone after normalization: {phone}")
         return None, None
 
     area = phone[1:4]
 
-    return f"+{phone}", area
+    formatted = f"+{phone}"
+    logging.info(f"Normalized phone: {formatted}, area: {area}")
+
+    return formatted, area
 
 
-# ---------- STEP 5 (⚡ FAST VERSION - NO SHEETS) ----------
+# ---------- STEP 5 ----------
 def get_area_mapping(area):
+    logging.info(f"Fetching area mapping for area: {area}")
+
     phone_id = AREA_CODE_MAP.get(area, DEFAULT_PHONE)
-    return phone_id, phone_id  # second value used as "called_from"
+
+    logging.info(f"Mapped phone_id: {phone_id}")
+
+    return phone_id, phone_id
 
 
 # ---------- STEP 6 ----------
 def make_call(phone_id, to_number, address):
+    logging.info(f"Making call | to: {to_number}, from_id: {phone_id}, address: {address}")
+
     payload = {
         "agent_id": ELEVEN_AGENT_ID,
         "agent_phone_number_id": phone_id,
@@ -97,16 +130,29 @@ def make_call(phone_id, to_number, address):
     }
 
     res = requests.post(ELEVENLABS_URL, json=payload, headers=headers)
-    return res.json()
+
+    logging.info(f"ElevenLabs status code: {res.status_code}")
+
+    try:
+        response_json = res.json()
+        logging.info(f"ElevenLabs response: {response_json}")
+        return response_json
+    except Exception:
+        logging.error("Failed to parse ElevenLabs response")
+        return {}
 
 
 # ---------- STEP 7 ----------
 def remove_plus(phone):
-    return phone.lstrip("+")
+    cleaned = phone.lstrip("+")
+    logging.info(f"Removed plus: {phone} -> {cleaned}")
+    return cleaned
 
 
 # ---------- STEP 9 ----------
 def find_row_by_phone(sheet, phone):
+    logging.info(f"Searching for phone in sheet: {phone}")
+
     records = sheet.get_all_records()
 
     for idx, r in enumerate(records, start=2):
@@ -114,15 +160,23 @@ def find_row_by_phone(sheet, phone):
         mobile = str(r.get("MOBILE_PHONE", "")).replace("+", "")
 
         if phone == valid or phone == mobile:
+            logging.info(f"Match found at row: {idx}")
             return idx
 
+    logging.warning("No matching row found")
     return None
+
 
 # ---------- STEP 10 ----------
 def update_row(sheet, row_id, call_count, called_from):
-    sheet.update(f"L{row_id}", [["Not Answered"]])   # Call Disposition
-    sheet.update(f"N{row_id}", [[call_count]])       # Call Count
-    sheet.update(f"S{row_id}", [[called_from]])      # Called From
+    logging.info(f"Updating row {row_id} | count: {call_count}, from: {called_from}")
+
+    sheet.update(f"L{row_id}", [["Not Answered"]])
+    sheet.update(f"N{row_id}", [[call_count]])
+    sheet.update(f"S{row_id}", [[called_from]])
+
+    logging.info(f"Row {row_id} updated successfully")
+
 
 # ================= MAIN ENDPOINT =================
 
@@ -134,18 +188,22 @@ async def trigger_calls():
         leads, sheet = get_leads(limit=5)
 
         if not leads:
+            logging.info("No leads found")
             return {"message": "No leads found"}
 
         results = []
 
         for lead in leads:
             try:
+                logging.info(f"Processing lead: {lead}")
+
                 phone, area = normalize_phone(
                     lead.get("VALID_PHONES"),
                     lead.get("MOBILE_PHONE")
                 )
 
                 if not phone:
+                    logging.warning("Skipping lead due to invalid phone")
                     continue
 
                 phone_id, called_from = get_area_mapping(area)
@@ -156,15 +214,15 @@ async def trigger_calls():
                     lead.get("Address")
                 )
 
-                logging.info(f"Call response: {call_res}")
-
                 clean_phone = remove_plus(phone)
 
                 call_count = int(lead.get("Call_Count") or 0) + 1
+                logging.info(f"New call count: {call_count}")
 
                 row_id = find_row_by_phone(sheet, clean_phone)
 
                 if not row_id:
+                    logging.warning("Skipping update, row not found")
                     continue
 
                 update_row(sheet, row_id, call_count, called_from)
@@ -172,12 +230,14 @@ async def trigger_calls():
                 results.append({"phone": phone, "status": "called"})
 
             except Exception as e:
-                logging.error(f"Error processing lead: {e}")
+                logging.error(f"Error processing lead: {e}", exc_info=True)
+
+        logging.info(f"Processing complete. Total processed: {len(results)}")
 
         return {"processed": len(results), "results": results}
 
     except Exception as e:
-        logging.error(f"Fatal error: {e}")
+        logging.error(f"Fatal error: {e}", exc_info=True)
         return {"error": str(e)}
 
 
@@ -187,6 +247,7 @@ async def trigger_calls():
 async def post_call_update(payload: dict):
     try:
         logging.info("Post-call webhook received")
+        logging.info(f"Payload received: {payload}")
 
         client = get_client()
         sheet = client.open_by_key("1chCOCUqMtZ-q25b2mV1hiwoyx7jLLePFWPkOcCbr7mU").worksheet(ALAB_WORKSHEET_NAME)
@@ -199,32 +260,35 @@ async def post_call_update(payload: dict):
             .get("called_number")
         )
 
+        logging.info(f"Extracted called_number: {called_number}")
+
         if not called_number:
+            logging.warning("No called_number found in payload")
             return {"error": "No called_number found"}
 
         phone = str(called_number).replace("+", "")
+        logging.info(f"Normalized incoming phone: {phone}")
 
         records = sheet.get_all_records()
 
         row_id = None
 
-        # VALID_PHONES
         for idx, r in enumerate(records, start=2):
             if str(r.get("VALID_PHONES", "")).replace("+", "") == phone:
                 row_id = idx
+                logging.info(f"Match found in VALID_PHONES at row {row_id}")
                 break
 
-        # MOBILE_PHONE fallback
         if not row_id:
             for idx, r in enumerate(records, start=2):
                 if str(r.get("MOBILE_PHONE", "")).replace("+", "") == phone:
                     row_id = idx
+                    logging.info(f"Match found in MOBILE_PHONE at row {row_id}")
                     break
 
         if not row_id:
+            logging.warning("No matching lead found for post-call")
             return {"message": "No matching lead"}
-
-
 
         timestamp = payload.get("event_timestamp")
         pacific_time = ""
@@ -234,8 +298,13 @@ async def post_call_update(payload: dict):
             pacific = pytz.timezone("America/Los_Angeles")
             pacific_time = dt.replace(tzinfo=pytz.utc).astimezone(pacific).strftime("%m/%d/%Y %H:%M:%S")
 
+        logging.info(f"Converted timestamp: {pacific_time}")
+
         analysis = payload.get("data", {}).get("analysis", {}).get("data_collection_results", {})
         metadata = payload.get("data", {}).get("metadata", {})
+
+        logging.info(f"Analysis data: {analysis}")
+        logging.info(f"Metadata: {metadata}")
 
         sheet.update(f"L{row_id}", [["Answered"]])
         sheet.update(f"Q{row_id}", [[pacific_time]])
@@ -245,8 +314,10 @@ async def post_call_update(payload: dict):
         sheet.update(f"U{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
         sheet.update(f"V{row_id}", [[metadata.get("call_duration_secs")]])
 
+        logging.info(f"Post-call update completed for row {row_id}")
+
         return {"status": "updated", "row": row_id}
 
     except Exception as e:
-        logging.error(f"Post-call error: {e}")
+        logging.error(f"Post-call error: {e}", exc_info=True)
         return {"error": str(e)}
