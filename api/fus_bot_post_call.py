@@ -134,7 +134,7 @@ async def handle_post_call(request: Request):
                 raise Exception(f"Salesforce error: {res.text}")
 
         # ------------------- GOOGLE SHEETS -------------------
-        if duration > 180:
+        if duration > 18:
             logger.info(f"Logging to Google Sheets (duration: {duration}s)")
             await asyncio.to_thread(log_to_sheets, {"id": lead_id}, lead_id, duration, conv_id)
 
