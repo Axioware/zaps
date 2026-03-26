@@ -167,23 +167,19 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id):
         def safe(val):
             return str(val) if val is not None else ""
 
-        headers = sheet.row_values(1)
+        row = [
+            safe(conv_id),
+            safe(lead_info.get("Name")),
+            safe(lead_info.get("ACQ_Manager__c")),
+            safe(lead_info.get("Property_Address__c")),
+            f"{duration}s",
+            safe(lead_info.get("Change_of_Mind_Reason__c")),
+            safe(lead_info.get("is_interested_in_selling__c")),
+            safe(lead_info.get("check_back_time__c")),
+            f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
+        ]
 
-        data_map = {
-            "Call ID": safe(conv_id),
-            "Lead Name": safe(lead_info.get("Name")),
-            "ACQ Manager": safe(lead_info.get("ACQ_Manager__c")),
-            "Property Address": safe(f"{lead_info.get('Street', '')}, {lead_info.get('City', '')}, {lead_info.get('State', '')} {lead_info.get('PostalCode', '')}"),
-            "Call Duration": f"{duration}s",
-            "Change of Mind Reason": safe(lead_info.get("Change_of_Mind_Reason__c")),
-            "Is Interested?": safe(lead_info.get("is_interested_in_selling__c")),
-            "Checkback Time": safe(lead_info.get("check_back_time__c")),
-            "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
-        }
-
-        row = [data_map.get(col.strip(), "") for col in headers]
-
-        logger.info(f"Final row aligned to headers: {row}")
+        logger.info(f"Row before append: {row}")
 
         sheet.append_row(row, value_input_option="USER_ENTERED")
 
