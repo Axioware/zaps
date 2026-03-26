@@ -13,7 +13,8 @@ from config.config import (
     AREA_CODE_MAP,
     DEFAULT_PHONE
 )
-
+from datetime import datetime
+import pytz
 Router = APIRouter()
 
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
@@ -223,8 +224,7 @@ async def post_call_update(payload: dict):
         if not row_id:
             return {"message": "No matching lead"}
 
-        from datetime import datetime
-        import pytz
+
 
         timestamp = payload.get("event_timestamp")
         pacific_time = ""
