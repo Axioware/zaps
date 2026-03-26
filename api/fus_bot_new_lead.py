@@ -37,6 +37,7 @@ async def safe_request(client, method, url, **kwargs):
     for attempt in range(3):
         try:
             res = await client.request(method, url, **kwargs)
+            print(res)
             res.raise_for_status()
             return res
         except Exception as e:
