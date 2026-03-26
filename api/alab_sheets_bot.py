@@ -115,7 +115,7 @@ def make_call(phone_id, to_number, address):
     logging.info(f"Making call | to: {to_number}, from_id: {phone_id}, address: {address}")
 
     payload = {
-        "agent_id": ELEVEN_AGENT_ID,
+        "agent_id": "agent_6401kkp1zhqketvbbkqhc9jgnh4c",
         "agent_phone_number_id": phone_id,
         "to_number": to_number,
         "conversation_initiation_client_data": {
@@ -258,8 +258,7 @@ async def post_call_update(request: Request):
         called_number = (
             payload.get("conversation_initiation_client_data", {})
             .get("dynamic_variables", {})
-            .get("system", {})
-            .get("called_number")
+            .get("system__called_number")
         )
 
         logging.info(f"Extracted called_number: {called_number}")
@@ -302,8 +301,8 @@ async def post_call_update(request: Request):
 
         logging.info(f"Converted timestamp: {pacific_time}")
 
-        analysis = payload.get("data", {}).get("analysis", {}).get("data_collection_results", {})
-        metadata = payload.get("data", {}).get("metadata", {})
+        analysis = payload.get("analysis", {}).get("data_collection_results", {})
+        metadata = payload.get("metadata", {})
 
         logging.info(f"Analysis data: {analysis}")
         logging.info(f"Metadata: {metadata}")
