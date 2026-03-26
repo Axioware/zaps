@@ -82,14 +82,27 @@ async def handle_post_call(request: Request):
         call_status = str(payload.get("status", "unknown"))
 
         transcript = payload.get("transcript", [])
-        transcript_str = json.dumps(transcript) if transcript else "No transcript"
 
-        # Prevent Salesforce overflow (safe limit)
-        transcript_str = transcript_str[:30000]
+        if transcript:
+            lines = []
+            for msg in transcript:
+                role = msg.get("role", "").capitalize()
+                text = msg.get("message")
+
+                # skip empty or system/tool messages
+                if not text:
+                    continue
+
+                lines.append(f"{role}: {text}")
+
+            transcript_str = "\n".join(lines)
+        else:
+            transcript_str = "No transcript"
 
         custom_data = payload.get("conversation_initiation_client_data", {}) \
                              .get("dynamic_variables", {})
         lead_id = custom_data.get("lead_id")
+    
         conv_id = payload.get("conversation_id")
 
         if not lead_id:
