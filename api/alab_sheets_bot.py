@@ -1,12 +1,12 @@
 import logging
+import os
 import re
+from pydantic import json
 import requests
 import gspread
 from fastapi import APIRouter
 from google.oauth2.service_account import Credentials
 from config.config import (
-    GOOGLE_SERVICE_ACCOUNT_FILE,
-    ALAB_SPREADSHEET_NAME,
     ALAB_WORKSHEET_NAME,
     ELEVEN_LABS_KEY,
     ELEVEN_AGENT_ID,
@@ -21,12 +21,17 @@ ELEVENLABS_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
 
 # ---------- GOOGLE SHEETS CLIENT ----------
 def get_client():
-    creds = Credentials.from_service_account_file(
-        GOOGLE_SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    service_account_info = json.loads(
+        os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
     )
-    return gspread.authorize(creds)
 
+    creds = Credentials.from_service_account_info(
+        service_account_info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"]
+    )
+
+    return gspread.authorize(creds)
 
 # ---------- STEP 2 ----------
 def get_leads(limit=5):
