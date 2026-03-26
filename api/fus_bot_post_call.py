@@ -1,5 +1,6 @@
 import logging
 import os
+from gspread import client
 import httpx
 import asyncio
 import json
@@ -133,10 +134,16 @@ async def handle_post_call(request: Request):
             if res.status_code >= 400:
                 raise Exception(f"Salesforce error: {res.text}")
 
+            # ✅ FETCH LEAD DATA (THIS WAS MISSING)
+            res_get = await client.get(update_url, headers=headers)
+            lead_info = res_get.json()
+
+            logger.info(f"Fetched Lead Data: {lead_info}")
+
         # ------------------- GOOGLE SHEETS -------------------
         if duration > 18:
             logger.info(f"Logging to Google Sheets (duration: {duration}s)")
-            await asyncio.to_thread(log_to_sheets, {"id": lead_id}, lead_id, duration, conv_id)
+            await asyncio.to_thread(log_to_sheets, lead_info, lead_id, duration, conv_id)
 
         return {"status": "success", "duration": duration}
 
@@ -152,22 +159,32 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id):
     try:
         gs_client = get_sheets_client()
 
-        sheet = gs_client.open("Ai Bot FUS Discovery Call List").worksheet("Copy of Call Recording Metrics")
-        logging.info("Google Sheets client initialized")
+        sheet = gs_client.open("Ai Bot FUS Discovery Call List") \
+                         .worksheet("Copy of Call Recording Metrics")
+
+        logger.info("Google Sheets client initialized")
+
+        # SAFETY: convert None → ""
+        def safe(val):
+            return str(val) if val is not None else ""
+
         row = [
-            conv_id,
-            lead_info.get("Lead Name", "N/A"),
-            lead_info.get("ACQ Manager"),
-            lead_info.get("Property Address", "N/A"),
+            safe(conv_id),
+            safe(lead_info.get("Name")),                     # ✅ FIXED
+            safe(lead_info.get("ACQ_Manager__c")),           # ✅ FIXED
+            safe(lead_info.get("Property_Address__c")),      # ✅ FIXED
             f"{duration}s",
-            lead_info.get("Change of Mind Reason"),
-            lead_info.get("Is Interested?"),
-            lead_info.get("Checkback Time"),
+            safe(lead_info.get("Change_of_Mind_Reason__c")), # ✅ FIXED
+            safe(lead_info.get("Is_Interested__c")),         # ✅ FIXED
+            safe(lead_info.get("Checkback_Time__c")),        # ✅ FIXED
             f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view"
         ]
+
         logger.info(f"Appending row to sheet: {row}")
+
         sheet.append_row(row)
-        logger.info(f"Sheet updated for lead {lead_id}")
+
+        logger.info(f"✅ Sheet updated for lead {lead_id}")
 
     except Exception as e:
-        logger.error(f"Google Sheets error: {str(e)}")
+        logger.error(f"❌ Google Sheets error: {repr(e)}")
