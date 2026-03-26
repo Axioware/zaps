@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 import httpx
 from fastapi import APIRouter, BackgroundTasks
 
+from api.alab_sheets_bot import get_area_code_map_cached, get_area_mapping
+
 from config.config import (
     SF_CLIENT_ID,
     SF_CLIENT_SECRET,
@@ -128,14 +130,18 @@ async def process_lead(client, lead, headers):
         raw_phone = lead.get("Phone") or ""
         digits = re.sub(r"\D", "", raw_phone)
 
-        if digits.startswith("1") and len(digits) > 10:
-            digits = digits[1:]
+        # if digits.startswith("1") and len(digits) > 10:
+        #     digits = digits[1:]
 
         if not digits:
             return
 
-        area_code = digits[:3]
-        from_phone = AREA_CODE_MAP.get(area_code, DEFAULT_PHONE)
+        area_code = digits[1:4]
+        print(digits, area_code)
+        from_phone, _ = get_area_mapping(area_code)
+        if not from_phone:
+            from_phone = DEFAULT_PHONE
+            logger.info(f"No mapping for area code {area_code}. Using default phone.")
 
         # Call API
         await safe_request(

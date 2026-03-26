@@ -62,13 +62,15 @@ def load_area_code_map():
     records = sheet.get_all_records()
 
     area_map = {}
+    number = None
 
     for row in records:
         area = str(row.get("Area Code")).strip()
         phone_id = row.get("Phone Number ID")
+        number = row.get("Number")
 
         if area and phone_id:
-            area_map[area] = phone_id
+            area_map[area] = [phone_id, number]
 
     logging.info(f"Loaded {len(area_map)} area mappings")
 
@@ -130,11 +132,13 @@ def get_area_mapping(area):
 
     area_map = get_area_code_map_cached()
 
-    phone_id = area_map.get(area, DEFAULT_PHONE)
+    lis = area_map.get(area, None)
 
-    logging.info(f"Resolved phone_id: {phone_id}")
+    logging.info(f"Resolved phone_id: {lis}")
 
-    return phone_id, phone_id
+    if lis:
+        return lis[0], lis[1]
+    return None, None
 
 
 # ---------- STEP 6 ----------
