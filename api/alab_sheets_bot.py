@@ -322,7 +322,7 @@ async def post_call_update(request: Request):
             logging.warning("No matching lead found for post-call")
             return {"message": "No matching lead"}
 
-        timestamp = payload.get("event_timestamp")
+        timestamp = payload.get("metadata", {}).get("start_time_unix_secs")
         pacific_time = ""
 
         if timestamp:
@@ -332,17 +332,22 @@ async def post_call_update(request: Request):
 
         logging.info(f"Converted timestamp: {pacific_time}")
 
-        analysis = payload.get("analysis", {}).get("data_collection_results", {})
+        analysis_list = payload.get("analysis", {}).get("data_collection_results_list", [])
+
+        def get_value(key):
+            for item in analysis_list:
+                if item.get("data_collection_id") == key:
+                    return item.get("value")
+            return None
         metadata = payload.get("metadata", {})
 
-        logging.info(f"Analysis data: {analysis}")
         logging.info(f"Metadata: {metadata}")
 
         sheet.update(f"L{row_id}", [["Answered"]])
         sheet.update(f"M{row_id}", [[pacific_time]])
-        sheet.update(f"O{row_id}", [[analysis.get("wrong_call", {}).get("value")]])
-        sheet.update(f"P{row_id}", [[analysis.get("Do they want to sell?", {}).get("value")]])
-        sheet.update(f"Q{row_id}", [[analysis.get("call_back_time", {}).get("value")]])
+        sheet.update(f"O{row_id}", [[get_value("wrong_call")]])
+        sheet.update(f"P{row_id}", [[get_value("Do they want to sell?")]])
+        sheet.update(f"Q{row_id}", [[get_value("call_back_time")]])
         sheet.update(f"R{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
         sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
 
