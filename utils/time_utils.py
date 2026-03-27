@@ -1,5 +1,4 @@
 from datetime import datetime
-
 def is_within_time_window(start_time: str, end_time: str):
     now = datetime.now().time()
 

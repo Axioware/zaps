@@ -12,10 +12,6 @@ from api.fus_bot_post_call import Router as PostCallRouter
 from api.alab_sheets_bot import Router as AlabSheetsRouter
 from core.security import verify_admin
 from api.sheets import router as SheetsRouter
-from services.scheduler_service import start_scheduler, scheduler_loop
-
-
-
 
 
 
@@ -30,7 +26,6 @@ app = FastAPI(title="Lead Automation System")
 @app.on_event("startup")
 def startup_event():
     init_db()
-    start_scheduler()
     logger.info("Database initialized.")
 
 @app.middleware("http")
