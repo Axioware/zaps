@@ -1,70 +1,44 @@
 import logging
-import httpx
-import asyncio
 from fastapi import APIRouter, Request, HTTPException, Header
-
-from config.config import SF_INSTANCE_URL, ADMIN_SECRET_KEY
-from api.fus_bot_new_lead import get_sf_access_token
+from services.salesforce_service import get_sf_access_token
+from config.config import SF_INSTANCE_URL
+from clients.client import get_client
+from utils.retry import safe_request
 
 Router = APIRouter()
 logger = logging.getLogger("call_end")
 
-# ------------------- CONFIG -------------------
 SF_FIELDS = {
     "reason": "Change_of_Mind_Reason__c",
     "interested": "Is_Interested_in_Selling__c",
     "callback": "Check_Back_Time__c"
 }
 
-# ------------------- SECURITY -------------------
-def verify_webhook(x_api_key: str = Header(None)):
-    if not x_api_key or x_api_key != ADMIN_SECRET_KEY:
-        raise HTTPException(status_code=403, detail="Unauthorized webhook")
-
-# ------------------- HTTP CLIENT -------------------
-def get_client():
-    return httpx.AsyncClient(timeout=10.0)
-
-# ------------------- RETRY -------------------
-async def safe_request(client, method, url, **kwargs):
-    for attempt in range(3):
-        try:
-            res = await client.request(method, url, **kwargs)
-            res.raise_for_status()
-            return res
-        except Exception as e:
-            if attempt == 2:
-                raise
-            await asyncio.sleep(1 * (attempt + 1))
-
-# ------------------- ROUTE -------------------
 @Router.post("/call-end")
 async def handle_call_end(
     request: Request,
-    _: str = Header(None)  # optional header pass-through
+    _: str = Header(None)  
 ):
     try:
         data = await request.json()
         logger.info(f"Webhook received: {data}")
 
-        # ------------------- VALIDATION -------------------
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="Invalid payload")
 
-        # Extract parameters
+     
         params = data.get("parameters", {})
         variables = data.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
 
         lead_id = (
                 variables.get("lead_id") or
-                data.get("lead_id")  # fallback for flat payload
+                data.get("lead_id")  
             )
 
         if not lead_id:
             logger.error("Missing lead_id")
             raise HTTPException(status_code=400, detail="Missing lead_id")
 
-        # ------------------- CLEAN INPUT -------------------
         reason = str(params.get("what_changed", "No reason provided"))[:255]
         interested = str(params.get("is_interested", "Unknown"))[:50]
         callback = str(params.get("callback_time", ""))[:50]
@@ -75,7 +49,6 @@ async def handle_call_end(
             SF_FIELDS["callback"]: callback
         }
 
-        # ------------------- SALESFORCE -------------------
         access_token = await get_sf_access_token()
 
         headers = {

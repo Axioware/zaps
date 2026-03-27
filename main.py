@@ -1,35 +1,38 @@
-import logging
-import time
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
+import logging, time, asyncio
+
+from fastapi import FastAPI, Header, Depends, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-
-# Import custom modules
+from core.rate_limiter import rate_limiter
 from config.database import init_db, get_row_limit, update_row_limit
 from config.config import ADMIN_SECRET_KEY
 from api.fus_bot_new_lead import Router as LeadRouter
 from api.fus_bot_call_end import Router as CallEndRouter
 from api.fus_bot_post_call import Router as PostCallRouter
 from api.alab_sheets_bot import Router as AlabSheetsRouter
+from core.security import verify_admin
+from api.sheets import router as SheetsRouter
+from services.scheduler_service import start_scheduler, scheduler_loop
 
 
-# ------------------- LOGGING -------------------
+
+
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("app")
 
-# ------------------- APP INIT -------------------
 app = FastAPI(title="Lead Automation System")
 
-# ------------------- STARTUP -------------------
 @app.on_event("startup")
 def startup_event():
     init_db()
+    start_scheduler()
     logger.info("Database initialized.")
 
-# ------------------- MIDDLEWARE -------------------
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
@@ -41,43 +44,16 @@ async def log_requests(request: Request, call_next):
     
     return response
 
-# ------------------- BASIC RATE LIMIT -------------------
-# (Simple in-memory limiter per IP)
-RATE_LIMIT = {}
-MAX_REQUESTS = 20
-WINDOW = 60  # seconds
 
-def rate_limiter(request: Request):
-    ip = request.client.host
-    now = time.time()
-
-    if ip not in RATE_LIMIT:
-        RATE_LIMIT[ip] = []
-
-    # remove old requests
-    RATE_LIMIT[ip] = [t for t in RATE_LIMIT[ip] if now - t < WINDOW]
-
-    if len(RATE_LIMIT[ip]) >= MAX_REQUESTS:
-        raise HTTPException(status_code=429, detail="Too many requests")
-
-    RATE_LIMIT[ip].append(now)
-
-# ------------------- ADMIN SECURITY -------------------
-def verify_admin(x_api_key: str = Header(...)):
-    if not x_api_key or x_api_key != ADMIN_SECRET_KEY:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
-# ------------------- SCHEMA -------------------
 class ConfigUpdate(BaseModel):
     num_rows: int
 
-# ------------------- ROUTERS -------------------
 app.include_router(LeadRouter, prefix="/api/leads", tags=["Lead Processing"])
 app.include_router(CallEndRouter, prefix="/api/callback", tags=["Call Analysis"])
 app.include_router(PostCallRouter, prefix="/api/postcall", tags=["Post-Call Logging"])
 app.include_router(AlabSheetsRouter,prefix="/api/alab-sheets",tags=["ALab Sheets Bot"])
+app.include_router(SheetsRouter, prefix="/api", tags=["Sheets"])
 
-# ------------------- CONFIG ENDPOINTS -------------------
 @app.get("/config", dependencies=[Depends(rate_limiter)])
 async def view_config(_: str = Depends(verify_admin)):
     return {"num_rows": get_row_limit()}
@@ -87,7 +63,6 @@ async def update_config(data: ConfigUpdate, _: str = Depends(verify_admin)):
     update_row_limit(data.num_rows)
     return {"message": f"Limit updated to {data.num_rows}"}
 
-# ------------------- SIMPLE UI -------------------
 @app.get("/", response_class=HTMLResponse)
 async def simple_ui():
     current_limit = get_row_limit()
