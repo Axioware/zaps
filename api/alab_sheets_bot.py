@@ -272,17 +272,8 @@ async def trigger_calls():
         logging.error(f"Fatal error: {e}", exc_info=True)
         return {"error": str(e)}
 
-
-# ================= POST CALL =================
-
-@Router.post("/post-call")
-async def post_call_update(request: Request):
+def process_post_call(payload: dict):
     try:
-        logging.info("Post-call webhook received")
-        data = await request.json()
-        payload = data.get("data", {})
-        logging.info(f"Payload extracted: {payload}")
-
         client = get_client()
         sheet = client.open_by_key("1chCOCUqMtZ-q25b2mV1hiwoyx7jLLePFWPkOcCbr7mU").worksheet(ALAB_WORKSHEET_NAME)
 
@@ -292,14 +283,11 @@ async def post_call_update(request: Request):
             .get("system__called_number")
         )
 
-        logging.info(f"Extracted called_number: {called_number}")
-
         if not called_number:
             logging.warning("No called_number found in payload")
-            return {"error": "No called_number found"}
+            return
 
         phone = str(called_number).replace("+", "")
-        logging.info(f"Normalized incoming phone: {phone}")
 
         records = sheet.get_all_records()
 
@@ -308,19 +296,17 @@ async def post_call_update(request: Request):
         for idx, r in enumerate(records, start=2):
             if str(r.get("VALID_PHONES", "")).replace("+", "") == phone:
                 row_id = idx
-                logging.info(f"Match found in VALID_PHONES at row {row_id}")
                 break
 
         if not row_id:
             for idx, r in enumerate(records, start=2):
                 if str(r.get("MOBILE_PHONE", "")).replace("+", "") == phone:
                     row_id = idx
-                    logging.info(f"Match found in MOBILE_PHONE at row {row_id}")
                     break
 
         if not row_id:
-            logging.warning("No matching lead found for post-call")
-            return {"message": "No matching lead"}
+            logging.warning("No matching lead found")
+            return
 
         timestamp = payload.get("metadata", {}).get("start_time_unix_secs")
         pacific_time = ""
@@ -330,8 +316,6 @@ async def post_call_update(request: Request):
             pacific = pytz.timezone("America/Los_Angeles")
             pacific_time = dt.replace(tzinfo=pytz.utc).astimezone(pacific).strftime("%m/%d/%Y %H:%M:%S")
 
-        logging.info(f"Converted timestamp: {pacific_time}")
-
         analysis_list = payload.get("analysis", {}).get("data_collection_results_list", [])
 
         def get_value(key):
@@ -339,21 +323,37 @@ async def post_call_update(request: Request):
                 if item.get("data_collection_id") == key:
                     return item.get("value")
             return None
+
         metadata = payload.get("metadata", {})
 
-        logging.info(f"Metadata: {metadata}")
+        sheet.update(f"L{row_id}:T{row_id}", [[
+            "Answered",
+            pacific_time,
+            get_value("wrong_call"),
+            get_value("Do they want to sell?"),
+            get_value("call_back_time"),
+            str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used")),
+            "", 
+            metadata.get("call_duration_secs")
+        ]])
 
-        sheet.update(f"L{row_id}", [["Answered"]])
-        sheet.update(f"M{row_id}", [[pacific_time]])
-        sheet.update(f"O{row_id}", [[get_value("wrong_call")]])
-        sheet.update(f"P{row_id}", [[get_value("Do they want to sell?")]])
-        sheet.update(f"Q{row_id}", [[get_value("call_back_time")]])
-        sheet.update(f"R{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
-        sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
+        logging.info(f"Background update completed for row {row_id}")
 
-        logging.info(f"Post-call update completed for row {row_id}")
+    except Exception as e:
+        logging.error(f"Background task error: {e}", exc_info=True)
+        
+        
+from fastapi import BackgroundTasks
 
-        return {"status": "updated", "row": row_id}
+@Router.post("/post-call")
+async def post_call_update(request: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await request.json()
+        payload = data.get("data", {})
+
+        background_tasks.add_task(process_post_call, payload)
+
+        return {"status": "processing"}
 
     except Exception as e:
         logging.error(f"Post-call error: {e}", exc_info=True)
