@@ -10,10 +10,11 @@ from api.fus_bot_new_lead import Router as LeadRouter
 from api.fus_bot_call_end import Router as CallEndRouter
 from api.fus_bot_post_call import Router as PostCallRouter
 from api.alab_sheets_bot import Router as AlabSheetsRouter
+from api.count import router as SheetsstatsRouter
 from core.security import verify_admin
 from api.sheets import router as SheetsRouter
-
-
+from fastapi.middleware.cors import CORSMiddleware
+from core.celery_app import run_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +23,13 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 app = FastAPI(title="Lead Automation System")
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or ["http://localhost:5173"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.on_event("startup")
 def startup_event():
     init_db()
@@ -46,8 +53,15 @@ class ConfigUpdate(BaseModel):
 app.include_router(LeadRouter, prefix="/api/leads", tags=["Lead Processing"])
 app.include_router(CallEndRouter, prefix="/api/callback", tags=["Call Analysis"])
 app.include_router(PostCallRouter, prefix="/api/postcall", tags=["Post-Call Logging"])
-app.include_router(AlabSheetsRouter,prefix="/api/alab-sheets",tags=["ALab Sheets Bot"])
+app.include_router(AlabSheetsRouter,prefix="/api/alab-sheets",tags=["ALab Sheets Bot"]) 
 app.include_router(SheetsRouter, prefix="/api", tags=["Sheets"])
+app.include_router(SheetsstatsRouter, prefix="/api", tags=["Sheet Stats"])
+
+@app.get("/test-scheduler")
+def test_scheduler():
+    run_scheduler.delay()
+    return {"message": "Scheduler triggered manually"}
+
 
 @app.get("/config", dependencies=[Depends(rate_limiter)])
 async def view_config(_: str = Depends(verify_admin)):

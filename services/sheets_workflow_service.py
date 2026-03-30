@@ -1,29 +1,31 @@
-from uvicorn import logging
+import logging
 from config.config import ALAB_WORKSHEET_NAME
 import re
 from repositories.google_sheets_repository import get_client
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("sheets_workflow")
 
 def get_leads(limit=5):
-    logging.info(f"Fetching leads with limit={limit}")
+    logger.info(f"Fetching leads with limit={limit}")
     client = get_client()
     sheet = client.open_by_key("1chCOCUqMtZ-q25b2mV1hiwoyx7jLLePFWPkOcCbr7mU").worksheet(ALAB_WORKSHEET_NAME)
     records = sheet.get_all_records()
-    logging.info(f"Total records fetched: {len(records)}")
+    logger.info(f"Total records fetched: {len(records)}")
     leads = []
     for idx, r in enumerate(records, start=2):
         if not r.get("Call Disposition"):
             r["_row"] = idx
             leads.append(r)
-    logging.info(f"Filtered leads count: {len(leads)}")
+    logger.info(f"Filtered leads count: {len(leads)}")
     return leads[:limit], sheet
 
 
 def normalize_phone(valid_phone, mobile_phone):
-    logging.info(f"Normalizing phone | valid: {valid_phone}, mobile: {mobile_phone}")
+    logger.info(f"Normalizing phone | valid: {valid_phone}, mobile: {mobile_phone}")
     phone = valid_phone if valid_phone and str(valid_phone).strip() else mobile_phone
     if not phone:
-        logging.warning("No phone provided")
+        logger.warning("No phone provided")
         return None, None
     phone = re.sub(r"\D", "", str(phone))
 
@@ -34,20 +36,20 @@ def normalize_phone(valid_phone, mobile_phone):
         phone = "1" + phone
 
     if len(phone) < 11:
-        logging.warning(f"Invalid phone after normalization: {phone}")
+        logger.warning(f"Invalid phone after normalization: {phone}")
         return None, None
 
     area = phone[1:4]
 
     formatted = f"+{phone}"
-    logging.info(f"Normalized phone: {formatted}, area: {area}")
+    logger.info(f"Normalized phone: {formatted}, area: {area}")
 
     return formatted, area
 
 
 def update_row(sheet, row_id, call_count, called_from):
-    logging.info(f"Updating row {row_id} | count: {call_count}, from: {called_from}")
+    logger.info(f"Updating row {row_id} | count: {call_count}, from: {called_from}")
     sheet.update(f"L{row_id}", [["Not Answered"]])
     sheet.update(f"N{row_id}", [[call_count]])
     sheet.update(f"S{row_id}", [[called_from]])
-    logging.info(f"Row {row_id} updated successfully")
+    logger.info(f"Row {row_id} updated successfully")

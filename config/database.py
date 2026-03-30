@@ -19,32 +19,39 @@ def get_connection():
         conn.close()
 
 def init_db():
+    print('Initializing database...')
     with get_connection() as conn:
 
-        # existing table
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS sheets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                google_sheet_url TEXT,
-                status BOOLEAN,
-                rows_to_process INTEGER,
-                cron_schedule TEXT,
-                last_run TIMESTAMP,
-                last_status TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS config (
+                id INTEGER PRIMARY KEY,
+                num_rows INTEGER NOT NULL CHECK(num_rows > 0)
             )
         """)
 
-        # ✅ ADD NEW COLUMNS SAFELY
-        try:
-            conn.execute("ALTER TABLE sheets ADD COLUMN start_time TEXT")
-        except:
-            pass  # already exists
+        conn.execute("""
+            INSERT OR IGNORE INTO config (id, num_rows)
+            VALUES (1, 5)
+        """)
 
-        try:
-            conn.execute("ALTER TABLE sheets ADD COLUMN end_time TEXT")
-        except:
-            pass  # already exists
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS sheets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            google_sheet_url TEXT NOT NULL,
+            status BOOLEAN DEFAULT 1,
+            cron_schedule TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            last_run TIMESTAMP,
+            last_status TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sheets_status
+        ON sheets(status)
+        """)
 
         conn.commit()
         logger.info("Database initialized")
