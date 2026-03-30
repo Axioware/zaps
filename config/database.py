@@ -1,14 +1,11 @@
-import sqlite3
+import sqlite3, logging, os
 from contextlib import contextmanager
-import logging
-import os
+
 
 logger = logging.getLogger("db")
 
-# ------------------- CONFIG -------------------
 DB_PATH = os.getenv("DB_PATH", "settings.db")
 
-# ------------------- CONNECTION MANAGER -------------------
 @contextmanager
 def get_connection():
     try:
@@ -21,23 +18,37 @@ def get_connection():
     finally:
         conn.close()
 
-# ------------------- INIT -------------------
 def init_db():
     with get_connection() as conn:
+
+        # existing table
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS config (
-                id INTEGER PRIMARY KEY,
-                num_rows INTEGER NOT NULL CHECK(num_rows > 0)
+            CREATE TABLE IF NOT EXISTS sheets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                google_sheet_url TEXT,
+                status BOOLEAN,
+                rows_to_process INTEGER,
+                cron_schedule TEXT,
+                last_run TIMESTAMP,
+                last_status TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        conn.execute("""
-            INSERT OR IGNORE INTO config (id, num_rows)
-            VALUES (1, 5)
-        """)
+
+        # ✅ ADD NEW COLUMNS SAFELY
+        try:
+            conn.execute("ALTER TABLE sheets ADD COLUMN start_time TEXT")
+        except:
+            pass  # already exists
+
+        try:
+            conn.execute("ALTER TABLE sheets ADD COLUMN end_time TEXT")
+        except:
+            pass  # already exists
+
         conn.commit()
         logger.info("Database initialized")
 
-# ------------------- GET -------------------
 def get_row_limit() -> int:
     try:
         with get_connection() as conn:
@@ -54,7 +65,6 @@ def get_row_limit() -> int:
         logger.error(f"Error fetching row limit: {e}")
         raise
 
-# ------------------- UPDATE -------------------
 def update_row_limit(new_val: int):
     if not isinstance(new_val, int) or new_val <= 0:
         raise ValueError("num_rows must be a positive integer")
