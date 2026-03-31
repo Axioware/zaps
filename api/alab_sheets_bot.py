@@ -211,19 +211,15 @@ def update_row(sheet, row_id, call_count, called_from):
 
 
 # ================= MAIN ENDPOINT =================
-
-@Router.post("/")
-async def trigger_calls():
+def process_trigger_calls():
     try:
-        logging.info("GSheet call trigger started")
+        logging.info("GSheet call trigger started (background)")
 
         leads, sheet = get_leads(limit=5)
 
         if not leads:
             logging.info("No leads found")
-            return {"message": "No leads found"}
-
-        results = []
+            return
 
         for lead in leads:
             try:
@@ -249,7 +245,6 @@ async def trigger_calls():
                 clean_phone = remove_plus(phone)
 
                 call_count = int(lead.get("Call_Count") or 0) + 1
-                logging.info(f"New call count: {call_count}")
 
                 row_id = find_row_by_phone(sheet, clean_phone)
 
@@ -259,14 +254,25 @@ async def trigger_calls():
 
                 update_row(sheet, row_id, call_count, called_from)
 
-                results.append({"phone": phone, "status": "called"})
-
             except Exception as e:
                 logging.error(f"Error processing lead: {e}", exc_info=True)
 
-        logging.info(f"Processing complete. Total processed: {len(results)}")
+        logging.info("Background call processing complete")
 
-        return {"processed": len(results), "results": results}
+    except Exception as e:
+        logging.error(f"Fatal background error: {e}", exc_info=True)
+        
+@Router.post("/")
+async def trigger_calls(background_tasks: BackgroundTasks):
+    try:
+        logging.info("Trigger endpoint hit")
+
+        background_tasks.add_task(process_trigger_calls)
+
+        return {
+            "status": "started",
+            "message": "Call processing running in background"
+        }
 
     except Exception as e:
         logging.error(f"Fatal error: {e}", exc_info=True)
