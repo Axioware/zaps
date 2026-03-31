@@ -38,6 +38,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS sheets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             google_sheet_url TEXT NOT NULL,
+            worksheet_name TEXT NOT NULL,
             status BOOLEAN DEFAULT 1,
             cron_schedule TEXT,
             start_time TEXT,
