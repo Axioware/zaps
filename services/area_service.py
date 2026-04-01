@@ -17,10 +17,8 @@ def get_area_code_map_cached():
 
 
 def get_area_mapping(area):
-    logging.info(f"Fetching dynamic area mapping for: {area}")
     area_map = get_area_code_map_cached()
     lis = area_map.get(area, None)
-    logging.info(f"Resolved phone_id: {lis}")
 
     if lis:
         return lis[0], lis[1]

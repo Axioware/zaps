@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 from config.database import get_connection
 from utils.time_utils import is_within_time_window
+from api.alab_sheets_bot import trigger_calls
+import asyncio
 
 
 # ------------------- LOGGING -------------------
@@ -42,8 +44,6 @@ def run_scheduler(self):
                 end_time = sheet["end_time"]
                 last_run = sheet["last_run"]
 
-                logger.info(f" Checking sheet {sheet_id}")
-
                 # -------- TIME WINDOW --------
                 if start_time and end_time:
                     if not is_within_time_window(start_time, end_time):
@@ -61,7 +61,6 @@ def run_scheduler(self):
                         logger.warning(f" Invalid last_run format for sheet {sheet_id}")
 
                 # -------- EXECUTE TASK --------
-                logger.info(f" Triggering sheet {sheet_id}")
                 process_sheet.delay(sheet_id)
 
                 # -------- UPDATE LAST RUN --------
@@ -83,17 +82,13 @@ def run_scheduler(self):
 # ------------------- WORKER TASK -------------------
 @celery.task(bind=True, max_retries=3)
 def process_sheet(self, sheet_id):
-    logger.info(f" Processing sheet {sheet_id}")
 
     try:
-        from api.alab_sheets_bot import trigger_calls
-        import asyncio
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         try:
-            #  FIXED: pass sheet_id
             loop.run_until_complete(trigger_calls(sheet_id))
         finally:
             loop.close()

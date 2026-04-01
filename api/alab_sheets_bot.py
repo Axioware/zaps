@@ -17,11 +17,12 @@ logging.basicConfig(
 
 Router = APIRouter()
 
-
+logger = logging.getLogger(__name__)
+    
 # ================= TRIGGER CALLS (CELERY ENTRY) =================
 async def trigger_calls(sheet_id: int):
     try:
-        logging.info(f" Trigger started for sheet_id={sheet_id}")
+        logger.info(f" Trigger started for sheet_id={sheet_id}")
 
         # -------- LOAD SHEET FROM DB --------
         with get_connection() as conn:
@@ -31,16 +32,13 @@ async def trigger_calls(sheet_id: int):
             ).fetchone()
 
         if not sheet_data:
-            logging.error(" Sheet not found in DB")
+            logger.error(f"{sheet_id} Sheet not found in DB")
             return
 
         sheet_data = dict(sheet_data)
 
         sheet_url = sheet_data["google_sheet_url"]
         worksheet_name = sheet_data["worksheet_name"]
-
-        logging.info(f"Sheet URL: {sheet_url}")
-        logging.info(f"Worksheet: {worksheet_name}")
 
         # -------- CONNECT TO GOOGLE SHEET --------
         client = get_client()
@@ -49,20 +47,18 @@ async def trigger_calls(sheet_id: int):
 
         # -------- GET LIMIT FROM DB --------
         limit = get_row_limit()
-        logging.info(f"Using row limit: {limit}")
 
         # -------- GET LEADS --------
         leads = get_leads(sheet, limit=limit)
 
         if not leads:
-            logging.info("No leads found")
+            logger.info(f"No leads found for sheet  {sheet_id}")
             return {"message": "No leads found"}
 
         results = []
 
         for lead in leads:
             try:
-                logging.info(f"Processing lead: {lead}")
 
                 phone, area = normalize_phone(
                     lead.get("VALID_PHONES"),
@@ -70,7 +66,7 @@ async def trigger_calls(sheet_id: int):
                 )
 
                 if not phone:
-                    logging.warning("Skipping lead due to invalid phone")
+                    logger.warning(f"Skipping lead due to invalid phone: {lead.get('VALID_PHONES') or lead.get('MOBILE_PHONE')}")
                     continue
 
                 phone_id, called_from = get_area_mapping(area)

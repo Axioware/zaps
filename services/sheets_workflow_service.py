@@ -15,11 +15,12 @@ def get_leads(sheet, limit=None):
         # safety (avoid 0 or negative)
         limit = max(1, int(limit))
 
-        logger.info(f"Fetching leads with limit={limit}")
+        if limit == 1:
+            logger.info('Using dynamic limit from DB: 1 lead')
+
 
         # -------- FETCH RECORDS --------
         records = sheet.get_all_records()
-        logger.info(f"Total records fetched: {len(records)}")
 
         leads = []
 
@@ -29,12 +30,9 @@ def get_leads(sheet, limit=None):
                 r["_row"] = idx
                 leads.append(r)
 
-        logger.info(f"Filtered leads count: {len(leads)}")
 
         # -------- APPLY LIMIT --------
         final_leads = leads[:limit]
-
-        logger.info(f"Returning {len(final_leads)} leads")
 
         return final_leads
 

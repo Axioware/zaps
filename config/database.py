@@ -1,4 +1,4 @@
-import sqlite3, logging, os
+import sqlite3, logging, os, time
 from contextlib import contextmanager
 
 
@@ -57,7 +57,13 @@ def init_db():
         conn.commit()
         logger.info("Database initialized")
 
+_row_limit_cache: dict = {"value": None, "expires_at": 0.0}
+_ROW_LIMIT_TTL = 60  # seconds
+
 def get_row_limit() -> int:
+    if _row_limit_cache["value"] is not None and time.monotonic() < _row_limit_cache["expires_at"]:
+        return _row_limit_cache["value"]
+
     try:
         with get_connection() as conn:
             row = conn.execute(
@@ -67,7 +73,9 @@ def get_row_limit() -> int:
             if not row:
                 raise RuntimeError("Config row missing in DB")
 
-            return row["num_rows"]
+            _row_limit_cache["value"] = row["num_rows"]
+            _row_limit_cache["expires_at"] = time.monotonic() + _ROW_LIMIT_TTL
+            return _row_limit_cache["value"]
 
     except Exception as e:
         logger.error(f"Error fetching row limit: {e}")
@@ -88,6 +96,7 @@ def update_row_limit(new_val: int):
                 raise RuntimeError("Failed to update config")
 
             conn.commit()
+            _row_limit_cache["value"] = None  # invalidate cache
             logger.info(f"Row limit updated to {new_val}")
 
     except Exception as e:
