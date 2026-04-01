@@ -129,7 +129,7 @@ async def run_outbound_workflow():
 # ------------------- LEAD PROCESSING -------------------
 async def process_lead(client, lead, headers):
     try:
-        
+        logger.info(f"leads: {lead}")
         raw_phone = lead.get("Phone") or ""
         logger.info(f"raw phone: {raw_phone}")
         digits = re.sub(r"\D", "", raw_phone)
