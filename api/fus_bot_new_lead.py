@@ -119,8 +119,9 @@ async def run_outbound_workflow():
                 return
 
             # ------------------- PROCESS LEADS (PARALLEL) -------------------
-            tasks = [process_lead(client, lead, headers) for lead in leads]
-            await asyncio.gather(*tasks)
+            for lead in leads:
+                await process_lead(client, lead, headers)
+            
 
     except Exception as e:
         logger.error(f"Workflow failed: {str(e)}")
@@ -131,14 +132,10 @@ async def process_lead(client, lead, headers):
         raw_phone = lead.get("Phone") or ""
         digits = re.sub(r"\D", "", raw_phone)
 
-        # if digits.startswith("1") and len(digits) > 10:
-        #     digits = digits[1:]
-
         if not digits:
             return
 
         area_code = digits[1:4]
-        print(digits, area_code)
         from_phone, _ = get_area_mapping(area_code)
         if not from_phone:
             from_phone = DEFAULT_PHONE
@@ -176,7 +173,6 @@ async def process_lead(client, lead, headers):
             headers=headers
         )
 
-        logger.info(f"Processed lead {lead['Id']}")
 
     except Exception as e:
         logger.error(f"Lead failed {lead.get('Id')}: {str(e)}")
