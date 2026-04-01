@@ -9,14 +9,14 @@ router = APIRouter()
 class SheetCreate(BaseModel):
     google_sheet_url: str
     worksheet_name: str
-    cron_schedule: str
+    # cron_schedule: str
     status: bool = True
     start_time: Optional[str] = None  # New field
     end_time: Optional[str] = None    # New field
 class SheetUpdate(BaseModel):
     google_sheet_url: Optional[str]
     worksheet_name: Optional[str]
-    cron_schedule: Optional[str]
+    # cron_schedule: Optional[str]
     status: Optional[bool]
     start_time: Optional[str] = None  # New field
     end_time: Optional[str] = None    # New field
@@ -30,12 +30,12 @@ class SheetStatusUpdate(BaseModel):
 def create_sheet(data: SheetCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, cron_schedule, status, start_time, end_time)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, status, start_time, end_time)
+            VALUES (?, ?, ?, ?, ?)
         """, (
             str(data.google_sheet_url),
             data.worksheet_name,
-            data.cron_schedule,
+            # data.cron_schedule,
             data.status,
             data.start_time,  
             data.end_time   

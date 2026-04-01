@@ -1,25 +1,47 @@
 import logging
-from config.config import ALAB_WORKSHEET_NAME
 import re
 from repositories.google_sheets_repository import get_client
+from config.database import get_row_limit
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sheets_workflow")
 
-def get_leads(limit=5):
-    logger.info(f"Fetching leads with limit={limit}")
-    client = get_client()
-    sheet = client.open_by_key("1chCOCUqMtZ-q25b2mV1hiwoyx7jLLePFWPkOcCbr7mU").worksheet(ALAB_WORKSHEET_NAME)
-    records = sheet.get_all_records()
-    logger.info(f"Total records fetched: {len(records)}")
-    leads = []
-    for idx, r in enumerate(records, start=2):
-        if not r.get("Call Disposition"):
-            r["_row"] = idx
-            leads.append(r)
-    logger.info(f"Filtered leads count: {len(leads)}")
-    return leads[:limit], sheet
 
+def get_leads(sheet, limit=None):
+    try:
+        # -------- DYNAMIC LIMIT --------
+        if limit is None:
+            limit = get_row_limit()
+
+        # safety (avoid 0 or negative)
+        limit = max(1, int(limit))
+
+        logger.info(f"Fetching leads with limit={limit}")
+
+        # -------- FETCH RECORDS --------
+        records = sheet.get_all_records()
+        logger.info(f"Total records fetched: {len(records)}")
+
+        leads = []
+
+        # -------- FILTER LEADS --------
+        for idx, r in enumerate(records, start=2):
+            if not r.get("Call Disposition"):
+                r["_row"] = idx
+                leads.append(r)
+
+        logger.info(f"Filtered leads count: {len(leads)}")
+
+        # -------- APPLY LIMIT --------
+        final_leads = leads[:limit]
+
+        logger.info(f"Returning {len(final_leads)} leads")
+
+        return final_leads
+
+    except Exception as e:
+        logger.error(f"Error fetching leads: {e}", exc_info=True)
+        return []
 
 def normalize_phone(valid_phone, mobile_phone):
     logger.info(f"Normalizing phone | valid: {valid_phone}, mobile: {mobile_phone}")

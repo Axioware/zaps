@@ -2,9 +2,9 @@ import logging
 from celery import Celery
 from celery.schedules import crontab
 from datetime import datetime, timedelta, timezone
-from croniter import croniter
 import sys
 import os
+
 from config.database import get_connection
 from utils.time_utils import is_within_time_window
 
@@ -13,8 +13,9 @@ from utils.time_utils import is_within_time_window
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scheduler")
 
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 # ------------------- CELERY INIT -------------------
 celery = Celery(
     "scheduler",
@@ -39,33 +40,30 @@ def run_scheduler(self):
         for sheet in sheets:
             try:
                 sheet_id = sheet["id"]
-                cron_expr = sheet["cron_schedule"]
                 start_time = sheet["start_time"]
                 end_time = sheet["end_time"]
                 last_run = sheet["last_run"]
 
-                # -------- TIME WINDOW (handles overnight) --------
+                logger.info(f" Checking sheet {sheet_id}")
+
+                # -------- TIME WINDOW --------
                 if start_time and end_time:
                     if not is_within_time_window(start_time, end_time):
-                        continue
-
-                # -------- CRON CHECK (accurate) --------
-                if cron_expr:
-                    itr = croniter(cron_expr, now)
-                    prev_run = itr.get_prev(datetime)
-
-                    if (now - prev_run) > timedelta(minutes=2):
+                        logger.info(f"⏭ Skipping {sheet_id} (outside time window)")
                         continue
 
                 # -------- DUPLICATE PREVENT --------
                 if last_run:
-                    last_run_dt = datetime.fromisoformat(last_run)
-
-                    if (now - last_run_dt) < timedelta(minutes=2):
-                        continue
+                    try:
+                        last_run_dt = datetime.fromisoformat(last_run)
+                        if (now - last_run_dt) < timedelta(minutes=2):
+                            logger.info(f"⏭ Skipping {sheet_id} (already ran recently)")
+                            continue
+                    except Exception:
+                        logger.warning(f" Invalid last_run format for sheet {sheet_id}")
 
                 # -------- EXECUTE TASK --------
-                logger.info(f"🚀 Triggering sheet {sheet_id}")
+                logger.info(f" Triggering sheet {sheet_id}")
                 process_sheet.delay(sheet_id)
 
                 # -------- UPDATE LAST RUN --------
@@ -77,17 +75,17 @@ def run_scheduler(self):
                     conn.commit()
 
             except Exception as e:
-                logger.error(f"❌ Sheet {sheet['id']} failed: {e}", exc_info=True)
+                logger.error(f" Sheet {sheet['id']} failed: {e}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"❌ Scheduler failure: {e}", exc_info=True)
+        logger.error(f" Scheduler failure: {e}", exc_info=True)
         raise self.retry(countdown=10)
 
 
 # ------------------- WORKER TASK -------------------
 @celery.task(bind=True, max_retries=3)
 def process_sheet(self, sheet_id):
-    print(f"🔥 Processing sheet {sheet_id}")
+    logger.info(f" Processing sheet {sheet_id}")
 
     try:
         from api.alab_sheets_bot import trigger_calls
@@ -97,12 +95,15 @@ def process_sheet(self, sheet_id):
         asyncio.set_event_loop(loop)
 
         try:
-            loop.run_until_complete(trigger_calls())
+            #  FIXED: pass sheet_id
+            loop.run_until_complete(trigger_calls(sheet_id))
         finally:
             loop.close()
 
+        logger.info(f" Completed sheet {sheet_id}")
+
     except Exception as e:
-        print(f"❌ Sheet {sheet_id} error: {e}")
+        logger.error(f" Sheet {sheet_id} error: {e}")
         raise self.retry(countdown=20)
 
 
