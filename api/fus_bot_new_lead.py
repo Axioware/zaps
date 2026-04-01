@@ -39,7 +39,6 @@ async def safe_request(client, method, url, **kwargs):
     for attempt in range(3):
         try:
             res = await client.request(method, url, **kwargs)
-            print(res)
             res.raise_for_status()
             return res
         except Exception as e:
@@ -85,6 +84,7 @@ async def run_outbound_workflow():
         async with get_client() as client:
 
             # ------------------- NEW LEADS -------------------
+            logger.info('running query at: ' + datetime.now(ZoneInfo("US/Pacific")).strftime("%Y-%m-%d %H:%M:%S"))
             new_query = f"""
             SELECT Id, Phone, Status, CreatedDate, AI_Bot_Last_Modified_Date_Time__c 
             FROM Lead 
@@ -96,6 +96,7 @@ async def run_outbound_workflow():
 
             res = await safe_request(client, "GET", query_url, params={"q": new_query}, headers=headers)
             leads = res.json().get("records", [])
+            logger.info(f"query finished running at : " + datetime.now(ZoneInfo("US/Pacific")).strftime("%Y-%m-%d %H:%M:%S"))
 
             # ------------------- FALLBACK -------------------
             if not leads:
