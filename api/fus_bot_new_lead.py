@@ -129,10 +129,14 @@ async def run_outbound_workflow():
 # ------------------- LEAD PROCESSING -------------------
 async def process_lead(client, lead, headers):
     try:
+        
         raw_phone = lead.get("Phone") or ""
+        logger.info(f"raw phone: {raw_phone}")
         digits = re.sub(r"\D", "", raw_phone)
+        logger.info(f"digits {digits}")
 
         if not digits:
+            logging.info("No digits")
             return
 
         area_code = digits[1:4]
