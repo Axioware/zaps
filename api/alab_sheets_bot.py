@@ -1,17 +1,13 @@
 import logging, pytz
 from fastapi import APIRouter, Request
 from datetime import datetime
-
 from services.sheets_workflow_service import get_leads, normalize_phone, update_row
 from services.area_service import get_area_mapping
 from services.call_service import make_call
-
 from repositories.google_sheets_repository import get_client, find_row_by_phone
 from utils.phone_utils import remove_plus
 from utils.sheet_utils import extract_sheet_id
-from config.database import get_connection
-
-from config.database import get_row_limit
+from config.database import get_connection, get_row_limit
 
 
 logging.basicConfig(

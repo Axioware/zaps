@@ -1,6 +1,5 @@
 import logging
 import re
-from repositories.google_sheets_repository import get_client
 from config.database import get_row_limit
 
 logging.basicConfig(level=logging.INFO)

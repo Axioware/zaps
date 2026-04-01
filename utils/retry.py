@@ -1,5 +1,4 @@
-import logging
-import asyncio
+import logging, asyncio
 
 logger = logging.getLogger("post_call")
 

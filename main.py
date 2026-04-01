@@ -1,11 +1,9 @@
-import logging, time, asyncio
-
+import logging, time
 from fastapi import FastAPI, Header, Depends, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from core.rate_limiter import rate_limiter
 from config.database import init_db, get_row_limit, update_row_limit
-from config.config import ADMIN_SECRET_KEY
 from api.fus_bot_new_lead import Router as LeadRouter
 from api.fus_bot_call_end import Router as CallEndRouter
 from api.fus_bot_post_call import Router as PostCallRouter
@@ -121,7 +119,7 @@ async def simple_ui():
                     <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1 ml-1">New Batch Limit</label>
                     <input type="number" id="rows" 
                            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all" 
-                           placeholder="e.g. 50">
+                           placeholder="e.g. 5">
                 </div>
 
                 <button onclick="save()" id="saveBtn"

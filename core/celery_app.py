@@ -1,9 +1,7 @@
-import logging
+import logging, sys, os
 from celery import Celery
 from celery.schedules import crontab
 from datetime import datetime, timedelta, timezone
-import sys
-import os
 
 from config.database import get_connection
 from utils.time_utils import is_within_time_window

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 from typing import Optional
 from config.database import get_connection
 
@@ -11,15 +11,15 @@ class SheetCreate(BaseModel):
     worksheet_name: str
     # cron_schedule: str
     status: bool = True
-    start_time: Optional[str] = None  # New field
-    end_time: Optional[str] = None    # New field
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
 class SheetUpdate(BaseModel):
     google_sheet_url: Optional[str]
     worksheet_name: Optional[str]
     # cron_schedule: Optional[str]
     status: Optional[bool]
-    start_time: Optional[str] = None  # New field
-    end_time: Optional[str] = None    # New field
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
 
 class SheetStatusUpdate(BaseModel):
     status: bool
