@@ -10,8 +10,6 @@ from google.oauth2.service_account import Credentials
 from config.config import (
     ALAB_WORKSHEET_NAME,
     ELEVEN_LABS_KEY,
-    ELEVEN_AGENT_ID,
-    DEFAULT_PHONE
 )
 from datetime import datetime
 import pytz
