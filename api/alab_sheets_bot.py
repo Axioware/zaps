@@ -3,7 +3,7 @@ import os
 import re
 import json
 import requests
-from fastapi import Request
+from fastapi import Request, BackgroundTasks
 import gspread
 from fastapi import APIRouter
 from google.oauth2.service_account import Credentials
@@ -330,16 +330,15 @@ def process_post_call(payload: dict):
 
         metadata = payload.get("metadata", {})
 
-        sheet.update(f"L{row_id}:T{row_id}", [[
-            "Answered",
-            pacific_time,
-            get_value("wrong_call"),
-            get_value("Do they want to sell?"),
-            get_value("call_back_time"),
-            str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used")),
-            "", 
-            metadata.get("call_duration_secs")
-        ]])
+        sheet.batch_update([
+            {"range": f"L{row_id}", "values": [["Answered"]]},
+            {"range": f"M{row_id}", "values": [[pacific_time]]},
+            {"range": f"O{row_id}", "values": [[get_value("wrong_call")]]},
+            {"range": f"P{row_id}", "values": [[get_value("Do they want to sell?")]]},
+            {"range": f"Q{row_id}", "values": [[get_value("call_back_time")]]},
+            {"range": f"R{row_id}", "values": [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]]},
+            {"range": f"T{row_id}", "values": [[metadata.get("call_duration_secs")]]},
+        ])
 
         logging.info(f"Background update completed for row {row_id}")
 
