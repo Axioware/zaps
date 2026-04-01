@@ -97,7 +97,7 @@ async def run_outbound_workflow():
             res = await safe_request(client, "GET", query_url, params={"q": new_query}, headers=headers)
             leads = res.json().get("records", [])
             logger.info(f"query finished running at : " + datetime.now(ZoneInfo("US/Pacific")).strftime("%Y-%m-%d %H:%M:%S"))
-
+            logger.info(f"Fetched number of leads: {len(leads)}")
             # ------------------- FALLBACK -------------------
             if not leads:
                 logger.info("No new leads. Checking old leads...")
