@@ -88,7 +88,8 @@ async def run_outbound_workflow():
             new_query = f"""
             SELECT Id, Phone, Status, CreatedDate, AI_Bot_Last_Modified_Date_Time__c 
             FROM Lead 
-            WHERE AI_Bot_Last_Modified_Date_Time__c = null 
+            WHERE AI_Bot_Last_Modified_Date_Time__c = null
+            AND Phone != null 
             AND (CreatedDate = LAST_N_DAYS:7 OR Status IN ('New Leads', 'Hit List', 'Discovery'))
             AND IsConverted = false 
             ORDER BY CreatedDate ASC LIMIT {limit}
@@ -106,6 +107,7 @@ async def run_outbound_workflow():
                 SELECT Id, Phone, Status, CreatedDate, AI_Bot_Last_Modified_Date_Time__c 
                 FROM Lead 
                 WHERE AI_Bot_Last_Modified_Date_Time__c != null 
+                AND Phone != null
                 AND (CreatedDate = LAST_N_DAYS:7 OR Status IN ('New Leads', 'Hit List', 'Discovery'))
                 AND IsConverted = false 
                 ORDER BY AI_Bot_Last_Modified_Date_Time__c ASC LIMIT {limit}
