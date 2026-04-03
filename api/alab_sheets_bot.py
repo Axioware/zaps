@@ -142,7 +142,7 @@ async def post_call_update(request: Request):
         row_id = None
         sheet = None
 
-        # 🔥 Loop through all sheets to find matching phone
+        #  Loop through all sheets to find matching phone
         for s in sheets:
             s = dict(s)
 
