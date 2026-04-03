@@ -39,6 +39,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             google_sheet_url TEXT NOT NULL,
             worksheet_name TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
             status BOOLEAN DEFAULT 1,
             cron_schedule TEXT,
             start_time TEXT,

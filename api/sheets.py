@@ -10,13 +10,16 @@ class SheetCreate(BaseModel):
     google_sheet_url: str
     worksheet_name: str
     # cron_schedule: str
+    agent_id: str
     status: bool = True
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+
 class SheetUpdate(BaseModel):
     google_sheet_url: Optional[str]
     worksheet_name: Optional[str]
     # cron_schedule: Optional[str]
+    agent_id: Optional[str]
     status: Optional[bool]
     start_time: Optional[str] = None
     end_time: Optional[str] = None
@@ -30,11 +33,12 @@ class SheetStatusUpdate(BaseModel):
 def create_sheet(data: SheetCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, status, start_time, end_time)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, start_time, end_time)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             str(data.google_sheet_url),
             data.worksheet_name,
+            data.agent_id,
             # data.cron_schedule,
             data.status,
             data.start_time,  

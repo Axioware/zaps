@@ -39,6 +39,7 @@ async def trigger_calls(sheet_id: int):
 
         sheet_url = sheet_data["google_sheet_url"]
         worksheet_name = sheet_data["worksheet_name"]
+        agent_id = sheet_data["agent_id"]
 
         # -------- CONNECT TO GOOGLE SHEET --------
         client = get_client()
@@ -74,7 +75,8 @@ async def trigger_calls(sheet_id: int):
                 call_resp = make_call(
                     phone_id,
                     phone,
-                    lead.get("Address")
+                    lead.get("Address"),
+                    agent_id
                 )
 
                 conv_id = call_resp.get("conversation_id")

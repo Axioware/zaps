@@ -8,11 +8,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-def make_call(phone_id, to_number, address):
+def make_call(phone_id, to_number, address, agent_id):
     logger.info(f"Making call | to: {to_number}, from_id: {phone_id}, address: {address}")
 
     payload = {
-        "agent_id": "agent_6401kkp1zhqketvbbkqhc9jgnh4c",
+        "agent_id": agent_id,
         "agent_phone_number_id": phone_id,
         "to_number": to_number,
         "conversation_initiation_client_data": {
