@@ -54,6 +54,32 @@ def init_db():
         ON sheets(status)
         """)
 
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS call_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT UNIQUE,
+            to_number TEXT,
+            from_number TEXT,
+            lead_id TEXT,
+            sheet_id INTEGER REFERENCES sheets(id),
+            call_disposition TEXT DEFAULT 'Not Answered',
+            called_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            duration_secs INTEGER,
+            call_status TEXT,
+            wrong_call TEXT,
+            wants_to_sell TEXT,
+            callback_time TEXT,
+            transfer_used TEXT,
+            transcript TEXT,
+            updated_at TIMESTAMP
+        )
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_call_logs_conversation_id
+        ON call_logs(conversation_id)
+        """)
+
         conn.commit()
         logger.info("Database initialized")
 
@@ -101,4 +127,46 @@ def update_row_limit(new_val: int):
 
     except Exception as e:
         logger.error(f"Error updating row limit: {e}")
+        raise
+
+def create_call_log(conversation_id: str, to_number: str, from_number: str = None,
+                    lead_id: str = None, sheet_id: int = None):
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO call_logs
+                   (conversation_id, to_number, from_number, lead_id, sheet_id, call_disposition)
+                   VALUES (?, ?, ?, ?, ?, 'Not Answered')""",
+                (conversation_id, to_number, from_number, lead_id, sheet_id)
+            )
+            conn.commit()
+            logger.info(f"Call log created: {conversation_id}")
+    except Exception as e:
+        logger.error(f"Error creating call log: {e}")
+        raise
+
+def update_call_log(conversation_id: str, call_disposition: str = None, duration_secs: int = None,
+                    call_status: str = None, wrong_call: str = None, wants_to_sell: str = None,
+                    callback_time: str = None, transfer_used: str = None, transcript: str = None):
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                """UPDATE call_logs SET
+                   call_disposition = COALESCE(?, call_disposition),
+                   duration_secs    = COALESCE(?, duration_secs),
+                   call_status      = COALESCE(?, call_status),
+                   wrong_call       = COALESCE(?, wrong_call),
+                   wants_to_sell    = COALESCE(?, wants_to_sell),
+                   callback_time    = COALESCE(?, callback_time),
+                   transfer_used    = COALESCE(?, transfer_used),
+                   transcript       = COALESCE(?, transcript),
+                   updated_at       = CURRENT_TIMESTAMP
+                   WHERE conversation_id = ?""",
+                (call_disposition, duration_secs, call_status, wrong_call,
+                 wants_to_sell, callback_time, transfer_used, transcript, conversation_id)
+            )
+            conn.commit()
+            logger.info(f"Call log updated: {conversation_id}")
+    except Exception as e:
+        logger.error(f"Error updating call log: {e}")
         raise

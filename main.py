@@ -9,10 +9,12 @@ from api.fus_bot_call_end import Router as CallEndRouter
 from api.fus_bot_post_call import Router as PostCallRouter
 from api.alab_sheets_bot import Router as AlabSheetsRouter
 from api.count import router as SheetsstatsRouter
+from api.call_analytics import router as CallAnalyticsRouter
 from core.security import verify_admin
 from api.sheets import router as SheetsRouter
 from fastapi.middleware.cors import CORSMiddleware
 from core.celery_app import run_scheduler
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +56,8 @@ app.include_router(PostCallRouter, prefix="/api/postcall", tags=["Post-Call Logg
 app.include_router(AlabSheetsRouter,prefix="/api/alab-sheets",tags=["ALab Sheets Bot"]) 
 app.include_router(SheetsRouter, prefix="/api", tags=["Sheets"])
 app.include_router(SheetsstatsRouter, prefix="/api", tags=["Sheet Stats"])
+app.include_router(CallAnalyticsRouter, prefix="/api", tags=["Analytics"])
+
 
 @app.get("/test-scheduler")
 def test_scheduler():

@@ -4,6 +4,7 @@ from config.config import SF_INSTANCE_URL
 from clients.client import get_client
 from repositories.google_sheets_repository import log_to_sheets, get_client
 from services.salesforce_service import get_sf_access_token
+from config.database import update_call_log
 
 Router = APIRouter()
 logger = logging.getLogger("post_call")
@@ -81,6 +82,15 @@ async def handle_post_call(request: Request):
         # if duration > 18:
         logger.info(f"Logging to Google Sheets (duration: {duration}s)")
         await asyncio.to_thread(log_to_sheets, lead_info, lead_id, duration, conv_id)
+
+        if conv_id:
+            update_call_log(
+                conversation_id=conv_id,
+                call_disposition="Answered" if duration > 0 else "Not Answered",
+                duration_secs=duration,
+                call_status=call_status,
+                transcript=transcript_str,
+            )
 
         return {"status": "success", "duration": duration}
 

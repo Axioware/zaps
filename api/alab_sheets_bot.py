@@ -7,7 +7,7 @@ from services.call_service import make_call
 from repositories.google_sheets_repository import get_client, find_row_by_phone
 from utils.phone_utils import remove_plus
 from utils.sheet_utils import extract_sheet_id
-from config.database import get_connection, get_row_limit
+from config.database import get_connection, get_row_limit, create_call_log, update_call_log
 
 
 logging.basicConfig(
@@ -71,11 +71,20 @@ async def trigger_calls(sheet_id: int):
 
                 phone_id, called_from = get_area_mapping(area)
 
-                make_call(
+                call_resp = make_call(
                     phone_id,
                     phone,
                     lead.get("Address")
                 )
+
+                conv_id = call_resp.get("conversation_id")
+                if conv_id:
+                    create_call_log(
+                        conversation_id=conv_id,
+                        to_number=phone,
+                        from_number=called_from,
+                        sheet_id=sheet_id
+                    )
 
                 clean_phone = remove_plus(phone)
 
@@ -183,6 +192,20 @@ async def post_call_update(request: Request):
         sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
 
         logging.info(f" Post-call updated row {row_id}")
+
+        # -------- UPDATE CALL LOG --------
+        conv_id = payload.get("conversation_id")
+        if conv_id:
+            update_call_log(
+                conversation_id=conv_id,
+                call_disposition="Answered",
+                duration_secs=metadata.get("call_duration_secs"),
+                call_status=str(payload.get("status", "")),
+                wrong_call=str(analysis.get("wrong_call", {}).get("value", "") or ""),
+                wants_to_sell=str(analysis.get("Do they want to sell?", {}).get("value", "") or ""),
+                callback_time=str(analysis.get("call_back_time", {}).get("value", "") or ""),
+                transfer_used=str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used", "") or ""),
+            )
 
         return {"status": "updated", "row": row_id}
 
