@@ -1,6 +1,7 @@
 import logging, pytz
 from fastapi import APIRouter, Request
 from datetime import datetime
+from config.config import DEFAULT_PHONE
 from services.sheets_workflow_service import get_leads, normalize_phone, update_row
 from services.area_service import get_area_mapping
 from services.call_service import make_call
@@ -8,6 +9,7 @@ from repositories.google_sheets_repository import get_client, find_row_by_phone
 from utils.phone_utils import remove_plus
 from utils.sheet_utils import extract_sheet_id
 from config.database import get_connection, get_row_limit, create_call_log, update_call_log
+
 
 
 logging.basicConfig(
@@ -39,7 +41,10 @@ async def trigger_calls(sheet_id: int):
 
         sheet_url = sheet_data["google_sheet_url"]
         worksheet_name = sheet_data["worksheet_name"]
-        agent_id = sheet_data["agent_id"]
+        agent_id = sheet_data.get("agent_id")
+        if not agent_id:
+            logger.error(f"No agent_id found for sheet {sheet_id}")
+            return {"error": "Agent ID not configured"}
 
         # -------- CONNECT TO GOOGLE SHEET --------
         client = get_client()
@@ -71,6 +76,9 @@ async def trigger_calls(sheet_id: int):
                     continue
 
                 phone_id, called_from = get_area_mapping(area)
+                if not phone_id:
+                    logger.warning(f"No mapping for {area}, using default phone")
+                    phone_id = DEFAULT_PHONE
 
                 call_resp = make_call(
                     phone_id,
@@ -78,8 +86,13 @@ async def trigger_calls(sheet_id: int):
                     lead.get("Address"),
                     agent_id
                 )
+                
+                if not call_resp:
+                    logger.warning(f"Skipping lead due to failed call: {phone}")
+                    continue
 
                 conv_id = call_resp.get("conversation_id")
+
                 if conv_id:
                     create_call_log(
                         conversation_id=conv_id,

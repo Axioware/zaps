@@ -29,10 +29,13 @@ celery.conf.timezone = "UTC"
 # ------------------- MAIN SCHEDULER -------------------
 @celery.task(bind=True, max_retries=3)
 def run_scheduler(self):
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    now_local_time = now_utc.time()  # time part only
+    today = now_utc.strftime("%A")   # Monday, Tuesday, etc.
 
     try:
         with get_connection() as conn:
+            # Select only active sheets
             sheets = conn.execute(
                 "SELECT * FROM sheets WHERE status=1"
             ).fetchall()
@@ -42,11 +45,19 @@ def run_scheduler(self):
                 sheet_id = sheet["id"]
                 start_time = sheet["start_time"]
                 end_time = sheet["end_time"]
+                day_of_week = sheet["day_of_week"]
                 last_run = sheet["last_run"]
 
-                # -------- TIME WINDOW --------
+                # -------- CHECK DAY OF WEEK --------
+                if day_of_week != today:
+                    logger.info(f"⏭ Skipping {sheet_id} (not {today})")
+                    continue
+
+                # -------- CHECK TIME WINDOW --------
                 if start_time and end_time:
-                    if not is_within_time_window(start_time, end_time):
+                    start_dt = datetime.strptime(start_time, "%H:%M").time()
+                    end_dt = datetime.strptime(end_time, "%H:%M").time()
+                    if not (start_dt <= now_local_time <= end_dt):
                         logger.info(f"⏭ Skipping {sheet_id} (outside time window)")
                         continue
 
@@ -54,7 +65,7 @@ def run_scheduler(self):
                 if last_run:
                     try:
                         last_run_dt = datetime.fromisoformat(last_run)
-                        if (now - last_run_dt) < timedelta(minutes=2):
+                        if (now_utc - last_run_dt) < timedelta(minutes=2):
                             logger.info(f"⏭ Skipping {sheet_id} (already ran recently)")
                             continue
                     except Exception:
@@ -67,7 +78,7 @@ def run_scheduler(self):
                 with get_connection() as conn:
                     conn.execute(
                         "UPDATE sheets SET last_run=? WHERE id=?",
-                        (now.isoformat(), sheet_id)
+                        (now_utc.isoformat(), sheet_id)
                     )
                     conn.commit()
 

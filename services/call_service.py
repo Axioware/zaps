@@ -28,10 +28,13 @@ def make_call(phone_id, to_number, address, agent_id):
     }
 
     res = requests.post(ELEVENLABS_URL, json=payload, headers=headers)
+    if res.status_code != 200:
+        logger.error(f"Call failed | status={res.status_code} | response={res.text}")
+        return None
     logger.info(f"ElevenLabs status code: {res.status_code}")
     try:
         response_json = res.json()
         return response_json
     except Exception:
         logger.error("Failed to parse ElevenLabs response")
-        return {}
+        return None

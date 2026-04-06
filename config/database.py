@@ -42,6 +42,7 @@ def init_db():
             agent_id TEXT NOT NULL,
             status BOOLEAN DEFAULT 1,
             cron_schedule TEXT,
+            day_of_week TEXT NOT NULL,
             start_time TEXT,
             end_time TEXT,
             last_run TIMESTAMP,

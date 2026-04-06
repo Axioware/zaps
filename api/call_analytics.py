@@ -43,13 +43,15 @@ def get_call_analytics():
                 SUM(CASE WHEN call_disposition != 'Answered' THEN 1 ELSE 0 END) as unanswered
             FROM call_logs
             GROUP BY DATE(called_at)
-            ORDER BY DATE(called_at)
+            ORDER BY DATE(called_at) DESC
             LIMIT 7
         """).fetchall()
 
+        trend_rows = list(reversed(trend_rows))
+
         trend_data = [
             {
-                "date": row["date"],
+                "date": row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else row["date"],
                 "made": row["made"],
                 "answered": row["answered"],
                 "unanswered": row["unanswered"],
