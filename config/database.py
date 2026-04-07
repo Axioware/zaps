@@ -22,6 +22,7 @@ def init_db():
     print('Initializing database...')
     with get_connection() as conn:
 
+        # ---------- CONFIG ----------
         conn.execute("""
             CREATE TABLE IF NOT EXISTS config (
                 id INTEGER PRIMARY KEY,
@@ -34,6 +35,7 @@ def init_db():
             VALUES (1, 5)
         """)
 
+        # ---------- SHEETS ----------
         conn.execute("""
         CREATE TABLE IF NOT EXISTS sheets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,10 +43,6 @@ def init_db():
             worksheet_name TEXT NOT NULL,
             agent_id TEXT NOT NULL,
             status BOOLEAN DEFAULT 1,
-            cron_schedule TEXT,
-            day_of_week TEXT NOT NULL,
-            start_time TEXT,
-            end_time TEXT,
             last_run TIMESTAMP,
             last_status TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -56,6 +54,29 @@ def init_db():
         ON sheets(status)
         """)
 
+        # ---------- NEW: SCHEDULE TABLE ----------
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS sheet_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sheet_id INTEGER NOT NULL,
+            day_of_week TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            FOREIGN KEY(sheet_id) REFERENCES sheets(id) ON DELETE CASCADE
+        )
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sheet_schedules_sheet_id
+        ON sheet_schedules(sheet_id)
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sheet_schedules_day
+        ON sheet_schedules(day_of_week)
+        """)
+
+        # ---------- CALL LOGS ----------
         conn.execute("""
         CREATE TABLE IF NOT EXISTS call_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
