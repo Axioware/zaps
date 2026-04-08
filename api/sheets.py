@@ -1,3 +1,5 @@
+from os import times
+
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -5,21 +7,28 @@ from config.database import get_connection
 
 router = APIRouter()
 
-# ------------------- SCHEMAS -------------------
+# ----------- INNER MODEL -----------
+class DaySchedule(BaseModel):
+    start: str
+    end: str
+
+
+# ----------- CREATE -----------
 class SheetCreate(BaseModel):
     google_sheet_url: str
     worksheet_name: str
     agent_id: str
     status: bool = True
-    schedule: Dict[str, Dict[str, str]]  
+    schedule: Dict[str, DaySchedule]
 
 
+# ----------- UPDATE -----------
 class SheetUpdate(BaseModel):
-    google_sheet_url: Optional[str]
-    worksheet_name: Optional[str]
-    agent_id: Optional[str]
-    status: Optional[bool]
-    schedule: Optional[Dict[str, Dict[str, str]]]
+    google_sheet_url: Optional[str] = None
+    worksheet_name: Optional[str] = None
+    agent_id: Optional[str] = None
+    status: Optional[bool] = None
+    schedule: Optional[Dict[str, DaySchedule]] = None
 
 
 class SheetStatusUpdate(BaseModel):
@@ -45,8 +54,8 @@ def create_sheet(data: SheetCreate):
 
         # Insert schedule into sheet_schedules
         for day, times in data.schedule.items():
-            start = times.get("start", "00:00")
-            end = times.get("end", "00:00")
+            start = times.start
+            end = times.end
             if start == end == "00:00":
                 continue
             conn.execute("""
@@ -113,8 +122,8 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
 
             # Insert new schedules
             for day, times in data.schedule.items():
-                start = times.get("start", "00:00")
-                end = times.get("end", "00:00")
+                start = times.start
+                end = times.end
                 if start == end == "00:00":
                     continue
                 conn.execute("""

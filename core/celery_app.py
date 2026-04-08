@@ -1,7 +1,8 @@
 import logging, sys, os
 from celery import Celery
 from celery.schedules import crontab
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
+import pytz  
 
 from config.database import get_connection
 from api.alab_sheets_bot import trigger_calls
@@ -19,15 +20,18 @@ celery = Celery(
     broker="redis://localhost:6379/0",
     backend="redis://localhost:6379/0"
 )
-celery.conf.timezone = "UTC"
 
-# ------------------- MAIN SCHEDULER -------------------
+# Set to your local timezone so crontab and logs align with your clock
+celery.conf.timezone = "Asia/Karachi"
+LOCAL_TZ = pytz.timezone("Asia/Karachi")
+
 # ------------------- MAIN SCHEDULER -------------------
 @celery.task(bind=True, max_retries=3)
 def run_scheduler(self):
-    now_utc = datetime.now(timezone.utc)
-    now_local_time = now_utc.time()  # time part only
-    today = now_utc.strftime("%A").lower()  # lowercase to match DB
+    # Get current time in your local timezone
+    now_local = datetime.now(LOCAL_TZ)
+    now_time_only = now_local.time()
+    today = now_local.strftime("%A").lower()
 
     try:
         with get_connection() as conn:
@@ -58,60 +62,60 @@ def run_scheduler(self):
                     start_dt = datetime.strptime(start_time, "%H:%M").time()
                     end_dt = datetime.strptime(end_time, "%H:%M").time()
 
-                    # Correctly handle full-day (start <= now <= end) including midnight wrap
+                    # Handle window check (including overnight support)
                     if start_dt <= end_dt:
-                        in_window = start_dt <= now_local_time <= end_dt
+                        in_window = start_dt <= now_time_only <= end_dt
                     else:
                         # overnight schedule (e.g., 22:00 - 02:00)
-                        in_window = now_local_time >= start_dt or now_local_time <= end_dt
+                        in_window = now_time_only >= start_dt or now_time_only <= end_dt
 
                     if not in_window:
-                        logger.info(f"⏭ Skipping sheet {sheet_id} (outside time window {start_time}-{end_time})")
+                        logger.info(f"⏭ Skipping sheet {sheet_id} (outside window {start_time}-{end_time} vs current {now_time_only.strftime('%H:%M')})")
                         continue
 
-                    # Prevent duplicate run
+                    # Prevent duplicate run (Check against local timestamp)
                     last_run = sheet["last_run"]
                     if last_run:
                         try:
                             last_run_dt = datetime.fromisoformat(last_run)
-                            if (now_utc - last_run_dt) < timedelta(minutes=2):
-                                logger.info(f"⏭ Skipping sheet {sheet_id} (already ran recently)")
+                            # Ensure last_run_dt is timezone aware for comparison
+                            if last_run_dt.tzinfo is None:
+                                last_run_dt = LOCAL_TZ.localize(last_run_dt)
+                                
+                            if (now_local - last_run_dt) < timedelta(minutes=2):
+                                logger.info(f"⏭ Skipping sheet {sheet_id} (already ran at {last_run_dt.strftime('%H:%M')})")
                                 continue
-                        except Exception:
-                            logger.warning(f" Invalid last_run format for sheet {sheet_id}")
+                        except Exception as e:
+                            logger.warning(f"Invalid last_run format for sheet {sheet_id}: {e}")
 
                     # Execute
                     process_sheet.delay(sheet_id)
 
-                    # Update last run
+                    # Update last run using local ISO format
                     conn.execute(
                         "UPDATE sheets SET last_run=? WHERE id=?",
-                        (now_utc.isoformat(), sheet_id)
+                        (now_local.isoformat(), sheet_id)
                     )
             conn.commit()
 
     except Exception as e:
-        logger.error(f" Scheduler failure: {e}", exc_info=True)
+        logger.error(f"Scheduler failure: {e}", exc_info=True)
         raise self.retry(countdown=10)
 
 
 # ------------------- WORKER TASK -------------------
 @celery.task(bind=True, max_retries=3)
 def process_sheet(self, sheet_id):
-
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
         try:
             loop.run_until_complete(trigger_calls(sheet_id))
         finally:
             loop.close()
-
-        logger.info(f" Completed sheet {sheet_id}")
-
+        logger.info(f"Completed sheet {sheet_id}")
     except Exception as e:
-        logger.error(f" Sheet {sheet_id} error: {e}")
+        logger.error(f"Sheet {sheet_id} error: {e}")
         raise self.retry(countdown=20)
 
 

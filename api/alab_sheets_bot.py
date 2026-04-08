@@ -197,11 +197,6 @@ async def post_call_update(request: Request):
         analysis = payload.get("analysis", {}).get("data_collection_results", {})
         metadata = payload.get("metadata", {})
 
-        what_changed = analysis.get("WhatChanged", {}).get("value", "")
-        checkback_time = analysis.get("CheckBackTime", {}).get("value", "")
-
-        logging.info(f"what_changed: {what_changed}, checkback_time: {checkback_time}")
-        print(f"what_changed: {what_changed}, checkback_time: {checkback_time}")
         # -------- UPDATE SHEET --------
         sheet.update(f"L{row_id}", [["Answered"]])
         sheet.update(f"M{row_id}", [[pacific_time]])
@@ -211,8 +206,6 @@ async def post_call_update(request: Request):
         sheet.update(f"R{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
         sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
 
-        sheet.update(f"U{row_id}", [[what_changed]])
-        sheet.update(f"V{row_id}", [[checkback_time]])
         
         logging.info(f" Post-call updated row {row_id}")
 
