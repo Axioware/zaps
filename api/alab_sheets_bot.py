@@ -29,7 +29,7 @@ async def trigger_calls(sheet_id: int):
         # -------- LOAD SHEET FROM DB --------
         with get_connection() as conn:
             sheet_data = conn.execute(
-                "SELECT * FROM sheets WHERE id=?",
+                "SELECT * FROM sheets WHERE id=%s",
                 (sheet_id,)
             ).fetchone()
 
@@ -151,7 +151,7 @@ async def post_call_update(request: Request):
 
         with get_connection() as conn:
             sheets = conn.execute(
-                "SELECT * FROM sheets WHERE status=1"
+                "SELECT * FROM sheets WHERE status=TRUE"
             ).fetchall()
 
         row_id = None

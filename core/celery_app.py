@@ -35,15 +35,15 @@ def run_scheduler(self):
 
     try:
         with get_connection() as conn:
-            sheets = conn.execute("SELECT * FROM sheets WHERE status=1").fetchall()
+            sheets = conn.execute("SELECT * FROM sheets WHERE status=TRUE").fetchall()
 
             for sheet in sheets:
                 sheet_id = sheet["id"]
-
+                logger.info(f"Checking sheet {sheet_id} ({sheet['google_sheet_url']})")
                 # Fetch today's schedules
                 schedules = conn.execute("""
                     SELECT * FROM sheet_schedules
-                    WHERE sheet_id=? AND lower(day_of_week)=?
+                    WHERE sheet_id=%s AND lower(day_of_week)=%s
                 """, (sheet_id, today)).fetchall()
 
                 if not schedules:
@@ -93,7 +93,7 @@ def run_scheduler(self):
 
                     # Update last run using local ISO format
                     conn.execute(
-                        "UPDATE sheets SET last_run=? WHERE id=?",
+                        "UPDATE sheets SET last_run=%s WHERE id=%s",
                         (now_local.isoformat(), sheet_id)
                     )
             conn.commit()

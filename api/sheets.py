@@ -43,14 +43,15 @@ def create_sheet(data: SheetCreate):
         # Insert main sheet info
         cursor = conn.execute("""
             INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
         """, (
             data.google_sheet_url,
             data.worksheet_name,
             data.agent_id,
             data.status,
         ))
-        sheet_id = cursor.lastrowid
+        sheet_id = cursor.fetchone()[0]
 
         # Insert schedule into sheet_schedules
         for day, times in data.schedule.items():
@@ -60,7 +61,7 @@ def create_sheet(data: SheetCreate):
                 continue
             conn.execute("""
                 INSERT INTO sheet_schedules (sheet_id, day_of_week, start_time, end_time)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
             """, (sheet_id, day, start, end))
 
         conn.commit()
@@ -80,10 +81,10 @@ def get_sheets(
         params = []
 
         if status is not None:
-            query += " WHERE status=?"
+            query += " WHERE status=%s"
             params.append(status)
 
-        query += " LIMIT ? OFFSET ?"
+        query += " LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         rows = conn.execute(query, params).fetchall()
@@ -92,7 +93,7 @@ def get_sheets(
         # Attach schedules
         for sheet in sheets:
             schedule_rows = conn.execute(
-                "SELECT day_of_week, start_time, end_time FROM sheet_schedules WHERE sheet_id=?",
+                "SELECT day_of_week, start_time, end_time FROM sheet_schedules WHERE sheet_id=%s",
                 (sheet["id"],)
             ).fetchall()
             sheet["schedule"] = {r["day_of_week"]: {"start": r["start_time"], "end": r["end_time"]} for r in schedule_rows}
@@ -108,17 +109,17 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
         fields = []
         values = []
         for key, value in data.dict(exclude_none=True, exclude={"schedule"}).items():
-            fields.append(f"{key}=?")
+            fields.append(f"{key}=%s")
             values.append(value)
 
         if fields:
             values.append(sheet_id)
-            conn.execute(f"UPDATE sheets SET {', '.join(fields)} WHERE id=?", values)
+            conn.execute(f"UPDATE sheets SET {', '.join(fields)} WHERE id=%s", values)
 
         # Update schedule if provided
         if data.schedule:
             # Delete old schedules for this sheet
-            conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=?", (sheet_id,))
+            conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=%s", (sheet_id,))
 
             # Insert new schedules
             for day, times in data.schedule.items():
@@ -128,7 +129,7 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
                     continue
                 conn.execute("""
                     INSERT INTO sheet_schedules (sheet_id, day_of_week, start_time, end_time)
-                    VALUES (?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s)
                 """, (sheet_id, day, start, end))
 
         conn.commit()
@@ -141,7 +142,7 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
 def toggle_status(sheet_id: int, data: SheetStatusUpdate):
     with get_connection() as conn:
         conn.execute(
-            "UPDATE sheets SET status=? WHERE id=?",
+            "UPDATE sheets SET status=%s WHERE id=%s",
             (data.status, sheet_id)
         )
         conn.commit()
@@ -153,7 +154,7 @@ def toggle_status(sheet_id: int, data: SheetStatusUpdate):
 @router.delete("/sheets/{sheet_id}")
 def delete_sheet(sheet_id: int):
     with get_connection() as conn:
-        conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=?", (sheet_id,))
-        conn.execute("DELETE FROM sheets WHERE id=?", (sheet_id,))
+        conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=%s", (sheet_id,))
+        conn.execute("DELETE FROM sheets WHERE id=%s", (sheet_id,))
         conn.commit()
     return {"message": "Sheet deleted"}

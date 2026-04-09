@@ -1,27 +1,57 @@
 from datetime import datetime
-import sqlite3, logging, os, time
+import psycopg2
+import psycopg2.extras
+import logging, os, time
 from contextlib import contextmanager
 import pytz
 
 logger = logging.getLogger("db")
 
-DB_PATH = os.getenv("DB_PATH", "settings.db")
 
-karachi_tz = pytz.timezone("Asia/Karachi")
+karachi_tz = pytz.timezone("America/Los_Angeles")
 karachi_time = datetime.now(karachi_tz)
-timestamp_str = karachi_time.strftime("%Y-%m-%d %H:%M:%S PKT") 
+timestamp_str = karachi_time.strftime("%Y-%m-%d %H:%M:%S PDT")
+
+
+class _PGConn:
+    """Thin wrapper so callers can use conn.execute() like sqlite3."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute(sql, params or ())
+        return cur
+
+    def cursor(self):
+        return self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
 
 @contextmanager
 def get_connection():
+    conn = None
     try:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        yield conn
+        conn = psycopg2.connect(os.getenv("POSTGRES_URL"))
+        yield _PGConn(conn)
     except Exception as e:
         logger.error(f"Database connection error: {e}")
+        if conn:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+
 
 def init_db():
     print('Initializing database...')
@@ -36,18 +66,19 @@ def init_db():
         """)
 
         conn.execute("""
-            INSERT OR IGNORE INTO config (id, num_rows)
+            INSERT INTO config (id, num_rows)
             VALUES (1, 5)
+            ON CONFLICT (id) DO NOTHING
         """)
 
         # ---------- SHEETS ----------
         conn.execute("""
         CREATE TABLE IF NOT EXISTS sheets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             google_sheet_url TEXT NOT NULL,
             worksheet_name TEXT NOT NULL,
             agent_id TEXT NOT NULL,
-            status BOOLEAN DEFAULT 1,
+            status BOOLEAN DEFAULT TRUE,
             last_run TIMESTAMP,
             last_status TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -59,10 +90,10 @@ def init_db():
         ON sheets(status)
         """)
 
-        # ---------- NEW: SCHEDULE TABLE ----------
+        # ---------- SCHEDULE TABLE ----------
         conn.execute("""
         CREATE TABLE IF NOT EXISTS sheet_schedules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             sheet_id INTEGER NOT NULL,
             day_of_week TEXT NOT NULL,
             start_time TEXT NOT NULL,
@@ -84,7 +115,7 @@ def init_db():
         # ---------- CALL LOGS ----------
         conn.execute("""
         CREATE TABLE IF NOT EXISTS call_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             conversation_id TEXT UNIQUE,
             to_number TEXT,
             from_number TEXT,
@@ -111,8 +142,10 @@ def init_db():
         conn.commit()
         logger.info("Database initialized")
 
+
 _row_limit_cache: dict = {"value": None, "expires_at": 0.0}
 _ROW_LIMIT_TTL = 60  # seconds
+
 
 def get_row_limit() -> int:
     if _row_limit_cache["value"] is not None and time.monotonic() < _row_limit_cache["expires_at"]:
@@ -135,6 +168,7 @@ def get_row_limit() -> int:
         logger.error(f"Error fetching row limit: {e}")
         raise
 
+
 def update_row_limit(new_val: int):
     if not isinstance(new_val, int) or new_val <= 0:
         raise ValueError("num_rows must be a positive integer")
@@ -142,7 +176,7 @@ def update_row_limit(new_val: int):
     try:
         with get_connection() as conn:
             cursor = conn.execute(
-                "UPDATE config SET num_rows=? WHERE id=1",
+                "UPDATE config SET num_rows=%s WHERE id=1",
                 (new_val,)
             )
 
@@ -157,14 +191,16 @@ def update_row_limit(new_val: int):
         logger.error(f"Error updating row limit: {e}")
         raise
 
+
 def create_call_log(conversation_id: str, to_number: str, from_number: str = None,
                     lead_id: str = None, sheet_id: int = None):
     try:
         with get_connection() as conn:
             conn.execute(
-                """INSERT OR IGNORE INTO call_logs
+                """INSERT INTO call_logs
                    (conversation_id, to_number, from_number, lead_id, sheet_id, call_disposition)
-                   VALUES (?, ?, ?, ?, ?, 'Not Answered')""",
+                   VALUES (%s, %s, %s, %s, %s, 'Not Answered')
+                   ON CONFLICT (conversation_id) DO NOTHING""",
                 (conversation_id, to_number, from_number, lead_id, sheet_id)
             )
             conn.commit()
@@ -173,28 +209,28 @@ def create_call_log(conversation_id: str, to_number: str, from_number: str = Non
         logger.error(f"Error creating call log: {e}")
         raise
 
+
 def update_call_log(conversation_id: str, call_disposition: str = None, duration_secs: int = None,
                     call_status: str = None, wrong_call: str = None, wants_to_sell: str = None,
                     callback_time: str = None, transfer_used: str = None, transcript: str = None, timestamp_str: str = None):
     try:
         if timestamp_str is None:
-            # fallback to current Karachi time if not provided
             karachi_tz = pytz.timezone("Asia/Karachi")
             timestamp_str = datetime.now(karachi_tz).strftime("%Y-%m-%d %H:%M:%S PKT")
 
         with get_connection() as conn:
             conn.execute(
                 """UPDATE call_logs SET
-                   call_disposition = COALESCE(?, call_disposition),
-                   duration_secs    = COALESCE(?, duration_secs),
-                   call_status      = COALESCE(?, call_status),
-                   wrong_call       = COALESCE(?, wrong_call),
-                   wants_to_sell    = COALESCE(?, wants_to_sell),
-                   callback_time    = COALESCE(?, callback_time),
-                   transfer_used    = COALESCE(?, transfer_used),
-                   transcript       = COALESCE(?, transcript),
-                   updated_at       = ?
-                   WHERE conversation_id = ?""",
+                   call_disposition = COALESCE(%s, call_disposition),
+                   duration_secs    = COALESCE(%s, duration_secs),
+                   call_status      = COALESCE(%s, call_status),
+                   wrong_call       = COALESCE(%s, wrong_call),
+                   wants_to_sell    = COALESCE(%s, wants_to_sell),
+                   callback_time    = COALESCE(%s, callback_time),
+                   transfer_used    = COALESCE(%s, transfer_used),
+                   transcript       = COALESCE(%s, transcript),
+                   updated_at       = %s
+                   WHERE conversation_id = %s""",
                 (call_disposition, duration_secs, call_status, wrong_call,
                  wants_to_sell, callback_time, transfer_used, transcript, timestamp_str, conversation_id)
             )
@@ -204,15 +240,12 @@ def update_call_log(conversation_id: str, call_disposition: str = None, duration
         logger.error(f"Error updating call log: {e}")
         raise
 
+
 def get_call_log(conversation_id: str):
-    """
-    Fetch a call log row by conversation_id.
-    Returns a dict or None if not found.
-    """
     try:
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM call_logs WHERE conversation_id = ?",
+                "SELECT * FROM call_logs WHERE conversation_id = %s",
                 (conversation_id,)
             ).fetchone()
             if row:

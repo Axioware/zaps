@@ -22,12 +22,12 @@ def get_call_analytics():
 
         transferred = conn.execute("""
             SELECT COUNT(*) FROM call_logs
-            WHERE transfer_used = 1
+            WHERE transfer_used = 'True'
         """).fetchone()[0]
 
         wrong_numbers = conn.execute("""
             SELECT COUNT(*) FROM call_logs
-            WHERE wrong_call = 1
+            WHERE wrong_call IS NOT NULL AND wrong_call NOT IN ('', 'no', 'No', 'false', 'False', 'None')
         """).fetchone()[0]
 
         avg_duration = conn.execute("""
@@ -37,13 +37,13 @@ def get_call_analytics():
         # ---------- TREND (GROUP BY DATE) ----------
         trend_rows = conn.execute("""
             SELECT 
-                DATE(called_at) as date,
+                called_at::date as date,
                 COUNT(*) as made,
                 SUM(CASE WHEN call_disposition = 'Answered' THEN 1 ELSE 0 END) as answered,
                 SUM(CASE WHEN call_disposition != 'Answered' THEN 1 ELSE 0 END) as unanswered
             FROM call_logs
-            GROUP BY DATE(called_at)
-            ORDER BY DATE(called_at) DESC
+            GROUP BY called_at::date
+            ORDER BY called_at::date DESC
             LIMIT 7
         """).fetchall()
 

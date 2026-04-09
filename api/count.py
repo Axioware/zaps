@@ -9,9 +9,9 @@ def get_sheet_stats():
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT 
-                SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS active,
-                SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS inactive,
+            SELECT
+                SUM(CASE WHEN status = TRUE THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = FALSE THEN 1 ELSE 0 END) AS inactive,
                 COUNT(*) AS total
             FROM sheets
         """)
