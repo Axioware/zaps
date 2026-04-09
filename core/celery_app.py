@@ -22,8 +22,8 @@ celery = Celery(
 )
 
 # Set to your local timezone so crontab and logs align with your clock
-celery.conf.timezone = "Asia/Karachi"
-LOCAL_TZ = pytz.timezone("Asia/Karachi")
+celery.conf.timezone = "America/Los_Angeles"
+LOCAL_TZ = pytz.timezone("America/Los_Angeles")
 
 # ------------------- MAIN SCHEDULER -------------------
 @celery.task(bind=True, max_retries=3)
