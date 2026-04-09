@@ -1,10 +1,10 @@
 import logging, asyncio
 from fastapi import APIRouter, Request, HTTPException, Header
-from config.config import SF_INSTANCE_URL
+from config.config import DEFAULT_PHONE, SF_INSTANCE_URL
 from clients.client import get_client
-from repositories.google_sheets_repository import log_to_sheets, get_client
+from repositories.google_sheets_repository import log_to_sheets
 from services.salesforce_service import get_sf_access_token
-from config.database import update_call_log
+from config.database import update_call_log, get_call_log
 
 Router = APIRouter()
 logger = logging.getLogger("post_call")
@@ -44,8 +44,15 @@ async def handle_post_call(request: Request):
         custom_data = payload.get("conversation_initiation_client_data", {}) \
                              .get("dynamic_variables", {})
         lead_id = custom_data.get("lead_id")
-    
+
         conv_id = payload.get("conversation_id")
+        called_from = ""
+        if conv_id:
+            call_log = get_call_log(conv_id)
+            if call_log:
+                called_from = call_log.get("from_number") or DEFAULT_PHONE
+        call_count = custom_data.get("call_count", 0)
+
 
         if not lead_id:
             raise HTTPException(status_code=400, detail="Missing lead_id")
@@ -80,8 +87,30 @@ async def handle_post_call(request: Request):
             logger.info(f"Fetched Lead Data: {lead_info}")
 
         # if duration > 18:
-        logger.info(f"Logging to Google Sheets (duration: {duration}s)")
-        await asyncio.to_thread(log_to_sheets, lead_info, lead_id, duration, conv_id)
+            analysis_root = payload.get("analysis", {})
+            data_collection = analysis_root.get("data_collection_results", {})
+
+            analysis = {
+                "call_back_time": data_collection.get("call_back_time", {}).get("value"),
+                "wrong_call": data_collection.get("wrong_call", {}).get("value"),
+                "call_transferred": str(
+                    payload.get("metadata", {})
+                    .get("features_usage", {})
+                    .get("transfer_to_number", {})
+                    .get("used")
+                )
+            }
+
+            await asyncio.to_thread(
+                log_to_sheets, 
+                lead_info,
+                lead_id,
+                duration,
+                conv_id,
+                call_count=call_count,
+                called_from=called_from,
+                analysis=analysis
+            )
 
         if conv_id:
             update_call_log(
@@ -89,7 +118,9 @@ async def handle_post_call(request: Request):
                 call_disposition="Answered" if duration > 0 else "Not Answered",
                 duration_secs=duration,
                 call_status=call_status,
-                transcript=transcript_str,
+                transcript=transcript_str, 
+                wrong_call=analysis.get("wrong_call"),
+                transfer_used=analysis.get("call_transferred")
             )
 
         return {"status": "success", "duration": duration}

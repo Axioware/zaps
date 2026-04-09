@@ -1,10 +1,15 @@
+from datetime import datetime
 import sqlite3, logging, os, time
 from contextlib import contextmanager
-
+import pytz
 
 logger = logging.getLogger("db")
 
 DB_PATH = os.getenv("DB_PATH", "settings.db")
+
+karachi_tz = pytz.timezone("Asia/Karachi")
+karachi_time = datetime.now(karachi_tz)
+timestamp_str = karachi_time.strftime("%Y-%m-%d %H:%M:%S PKT") 
 
 @contextmanager
 def get_connection():
@@ -170,8 +175,13 @@ def create_call_log(conversation_id: str, to_number: str, from_number: str = Non
 
 def update_call_log(conversation_id: str, call_disposition: str = None, duration_secs: int = None,
                     call_status: str = None, wrong_call: str = None, wants_to_sell: str = None,
-                    callback_time: str = None, transfer_used: str = None, transcript: str = None):
+                    callback_time: str = None, transfer_used: str = None, transcript: str = None, timestamp_str: str = None):
     try:
+        if timestamp_str is None:
+            # fallback to current Karachi time if not provided
+            karachi_tz = pytz.timezone("Asia/Karachi")
+            timestamp_str = datetime.now(karachi_tz).strftime("%Y-%m-%d %H:%M:%S PKT")
+
         with get_connection() as conn:
             conn.execute(
                 """UPDATE call_logs SET
@@ -183,13 +193,31 @@ def update_call_log(conversation_id: str, call_disposition: str = None, duration
                    callback_time    = COALESCE(?, callback_time),
                    transfer_used    = COALESCE(?, transfer_used),
                    transcript       = COALESCE(?, transcript),
-                   updated_at       = CURRENT_TIMESTAMP
+                   updated_at       = ?
                    WHERE conversation_id = ?""",
                 (call_disposition, duration_secs, call_status, wrong_call,
-                 wants_to_sell, callback_time, transfer_used, transcript, conversation_id)
+                 wants_to_sell, callback_time, transfer_used, transcript, timestamp_str, conversation_id)
             )
             conn.commit()
             logger.info(f"Call log updated: {conversation_id}")
     except Exception as e:
         logger.error(f"Error updating call log: {e}")
         raise
+
+def get_call_log(conversation_id: str):
+    """
+    Fetch a call log row by conversation_id.
+    Returns a dict or None if not found.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM call_logs WHERE conversation_id = ?",
+                (conversation_id,)
+            ).fetchone()
+            if row:
+                return dict(row)
+            return None
+    except Exception as e:
+        logger.error(f"Error fetching call log: {e}")
+        return None

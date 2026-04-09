@@ -22,12 +22,12 @@ def get_call_analytics():
 
         transferred = conn.execute("""
             SELECT COUNT(*) FROM call_logs
-            WHERE transfer_used = 'yes'
+            WHERE transfer_used = 1
         """).fetchone()[0]
 
         wrong_numbers = conn.execute("""
             SELECT COUNT(*) FROM call_logs
-            WHERE wrong_call = 'yes'
+            WHERE wrong_call = 1
         """).fetchone()[0]
 
         avg_duration = conn.execute("""

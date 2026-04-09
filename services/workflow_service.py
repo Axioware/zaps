@@ -69,6 +69,8 @@ async def process_lead(client, lead, headers):
         if not from_phone:
             from_phone = DEFAULT_PHONE
             logger.info(f"No mapping for area code {area_code}. Using default phone.")
+        if not caller_number:
+            caller_number = from_phone
 
         call_res = await safe_request(
             client,
