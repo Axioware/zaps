@@ -8,9 +8,9 @@ import pytz
 logger = logging.getLogger("db")
 
 
-karachi_tz = pytz.timezone("America/Los_Angeles")
-karachi_time = datetime.now(karachi_tz)
-timestamp_str = karachi_time.strftime("%Y-%m-%d %H:%M:%S PDT")
+los_angeles_tz = pytz.timezone("America/Los_Angeles")
+los_angeles_time = datetime.now(los_angeles_tz)
+timestamp_str = los_angeles_time.strftime("%Y-%m-%d %H:%M:%S PDT")
 
 
 class _PGConn:
