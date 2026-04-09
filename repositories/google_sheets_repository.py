@@ -111,9 +111,9 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
         headers = sheet.row_values(1)
         
         # Get current time in Karachi
-        karachi_tz = pytz.timezone("Asia/Karachi")
-        karachi_time = datetime.now(karachi_tz)
-        timestamp_str = karachi_time.strftime("%Y-%m-%d %H:%M:%S PKT")  # PKT = Pakistan Time
+        los_angeles_tz = pytz.timezone("America/Los_Angeles")
+        los_angeles_time = datetime.now(los_angeles_tz)
+        timestamp_str = los_angeles_time.strftime("%Y-%m-%d %H:%M:%S PDT")  # PDT = Pacific Daylight Time
 
         
         data_map = {
