@@ -120,7 +120,7 @@ def init_db():
             to_number TEXT,
             from_number TEXT,
             lead_id TEXT,
-            sheet_id INTEGER REFERENCES sheets(id),
+            sheet_id INTEGER REFERENCES sheets(id) ON DELETE SET NULL,
             call_disposition TEXT DEFAULT 'Not Answered',
             called_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             duration_secs INTEGER,

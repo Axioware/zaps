@@ -66,9 +66,11 @@ def normalize_phone(valid_phone, mobile_phone):
     return formatted, area
 
 
-def update_row(sheet, row_id, call_count, called_from):
-    logger.info(f"Updating row {row_id} | count: {call_count}, from: {called_from}")
+def update_row(sheet, row_id, call_count, called_from, phone):
+    logger.info(f"Updating row {row_id} | count: {call_count}, from: {called_from}, to: {phone}")
     sheet.update(f"L{row_id}", [["Not Answered"]])
     sheet.update(f"N{row_id}", [[call_count]])
     sheet.update(f"S{row_id}", [[called_from]])
+    sheet.update(f"U{row_id}", [[phone]])
+
     logger.info(f"Row {row_id} updated successfully")

@@ -111,7 +111,7 @@ async def trigger_calls(sheet_id: int):
                     logging.warning("Skipping update, row not found")
                     continue
 
-                update_row(sheet, row_id, call_count, called_from)
+                update_row(sheet, row_id, call_count, called_from, phone)
 
                 results.append({"phone": phone, "status": "called"})
 
@@ -197,14 +197,42 @@ async def post_call_update(request: Request):
         analysis = payload.get("analysis", {}).get("data_collection_results", {})
         metadata = payload.get("metadata", {})
 
+        # -------- SAFE DURATION --------
+        duration_raw = metadata.get("call_duration_secs", 0)
+        duration = float(duration_raw or 0)
+
+        # -------- TRANSFER DETECTION --------
+        transfer_used = str(
+            metadata.get("features_usage", {})
+            .get("transfer_to_number", {})
+            .get("used", "")
+        ).lower() == "true"
+
+        # -------- VOICEMAIL DETECTION (SAFE) --------
+        voicemail_flag = False
+        if analysis:
+            voicemail_flag = str(
+                analysis.get("voicemail_detected", {}).get("value", "")
+            ).lower() == "true"
+
+        # -------- DISPOSITION LOGIC --------
+        if duration <= 0:
+            disposition = "Not Answered"
+        elif voicemail_flag or transfer_used:
+            disposition = "Voicemail"
+        else:
+            disposition = "Answered"
+
         # -------- UPDATE SHEET --------
-        sheet.update(f"L{row_id}", [["Answered"]])
+        # sheet.update(f"L{row_id}", [["Answered"]])
+        sheet.update(f"L{row_id}", [[disposition]])
         sheet.update(f"M{row_id}", [[pacific_time]])
         sheet.update(f"O{row_id}", [[analysis.get("wrong_call", {}).get("value")]])
         sheet.update(f"P{row_id}", [[analysis.get("Do they want to sell?", {}).get("value")]])
         sheet.update(f"Q{row_id}", [[analysis.get("call_back_time", {}).get("value")]])
         sheet.update(f"R{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
         sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
+        # sheet.update(f"U{row_id}", [[analysis.get("called_number", {}).get("value")]])
 
         
         logging.info(f" Post-call updated row {row_id}")
@@ -214,7 +242,8 @@ async def post_call_update(request: Request):
         if conv_id:
             update_call_log(
                 conversation_id=conv_id,
-                call_disposition="Answered",
+                # call_disposition="Answered",
+                call_disposition=disposition,
                 duration_secs=metadata.get("call_duration_secs"),
                 call_status=str(payload.get("status", "")),
                 wrong_call=str(analysis.get("wrong_call", {}).get("value", "") or ""),

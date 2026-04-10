@@ -109,6 +109,14 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
         if duration > 0:
             call_count = (call_count or 0) + 1
         headers = sheet.row_values(1)
+
+        transferred = str(analysis.get("call_transferred")).lower() == "true" if analysis else False
+        if duration == 0:
+            disposition = "Not Answered"
+        elif transferred:
+            disposition = "Voicemail"
+        else:
+            disposition = "Answered"
         
         # Get current time in Karachi
         los_angeles_tz = pytz.timezone("America/Los_Angeles")
@@ -118,6 +126,7 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
         
         data_map = {
             "Call ID": safe(conv_id),
+            "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view",
             "Lead Name": safe(lead_info.get("Name")),
             "ACQ Manager": safe(lead_info.get("ACQ_Manager__c")),
             "Property Address": safe(
@@ -127,8 +136,8 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
             "Change of Mind Reason": safe(lead_info.get("Change_of_Mind_Reason__c")),
             "Is Interested?": safe(lead_info.get("Is_Interested_in_Selling__c")),
             "Checkback Time": safe(lead_info.get("Check_Back_Time__c")),
-            "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view",
-            "Call Disposition": "Answered" if duration > 0 else "Not Answered",
+            # "Call Disposition": "Answered" if duration > 0 else "Not Answered",
+            "Call Disposition": disposition,
             "Call Count": str(call_count),
             "Call Back Time": safe(analysis.get("call_back_time") if analysis else ""),
             "Wrong / DNC": safe(analysis.get("wrong_call") if analysis else ""),
