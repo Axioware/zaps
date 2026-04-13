@@ -8,7 +8,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-def make_call(phone_id, to_number, address, agent_id):
+async def make_call(phone_id, to_number, address, agent_id):
     logger.info(f"Making call | to: {to_number}, from_id: {phone_id}, address: {address}")
 
     payload = {

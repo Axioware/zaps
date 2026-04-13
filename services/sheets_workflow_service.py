@@ -45,7 +45,7 @@ def normalize_phone(valid_phone, mobile_phone):
     phone = valid_phone if valid_phone and str(valid_phone).strip() else mobile_phone
     logger.info(f"Selected phone for normalization: {phone}")
     if not phone:
-        logger.warning("No phone provided")
+        logger.info("No phone provided")
         return None, None
     phone = re.sub(r"\D", "", str(phone))
 
