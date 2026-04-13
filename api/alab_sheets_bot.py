@@ -80,7 +80,7 @@ async def trigger_calls(sheet_id: int):
                     logger.warning(f"No mapping for {area}, using default phone")
                     phone_id = DEFAULT_PHONE
 
-                call_resp = make_call(
+                call_resp = await make_call(
                     phone_id,
                     phone,
                     lead.get("Address"),
