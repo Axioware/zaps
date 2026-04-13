@@ -49,13 +49,15 @@ def normalize_phone(valid_phone, mobile_phone):
     phone = re.sub(r"\D", "", str(phone))
 
     if len(phone) == 22:
+        logging.info("Trimming 22-digit phone to last 11 digits")
         phone = phone[:11]
 
     if len(phone) == 10:
+        logging.info("Adding country code to 10-digit phone")
         phone = "1" + phone
 
     if len(phone) < 11:
-        logger.warning(f"Invalid phone after normalization: {phone}")
+        logger.info(f"Invalid phone after normalization: {phone}")
         return None, None
 
     area = phone[1:4]
