@@ -43,6 +43,7 @@ def get_leads(sheet, limit=None):
 def normalize_phone(valid_phone, mobile_phone):
     logger.info(f"Normalizing phone | valid: {valid_phone}, mobile: {mobile_phone}")
     phone = valid_phone if valid_phone and str(valid_phone).strip() else mobile_phone
+    logging.info(f"Selected phone for normalization: {phone}")
     if not phone:
         logger.warning("No phone provided")
         return None, None
