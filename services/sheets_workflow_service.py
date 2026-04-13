@@ -43,18 +43,18 @@ def get_leads(sheet, limit=None):
 def normalize_phone(valid_phone, mobile_phone):
     logger.info(f"Normalizing phone | valid: {valid_phone}, mobile: {mobile_phone}")
     phone = valid_phone if valid_phone and str(valid_phone).strip() else mobile_phone
-    logging.info(f"Selected phone for normalization: {phone}")
+    logger.info(f"Selected phone for normalization: {phone}")
     if not phone:
         logger.warning("No phone provided")
         return None, None
     phone = re.sub(r"\D", "", str(phone))
 
     if len(phone) == 22:
-        logging.info("Trimming 22-digit phone to last 11 digits")
+        logger.info("Trimming 22-digit phone to last 11 digits")
         phone = phone[:11]
 
     if len(phone) == 10:
-        logging.info("Adding country code to 10-digit phone")
+        logger.info("Adding country code to 10-digit phone")
         phone = "1" + phone
 
     if len(phone) < 11:
