@@ -108,7 +108,7 @@ async def trigger_calls(sheet_id: int):
                 row_id = find_row_by_phone(sheet, clean_phone)
 
                 if not row_id:
-                    logging.warning("Skipping update, row not found")
+                    logger.warning("Skipping update, row not found")
                     continue
 
                 update_row(sheet, row_id, call_count, called_from, phone)
@@ -116,21 +116,21 @@ async def trigger_calls(sheet_id: int):
                 results.append({"phone": phone, "status": "called"})
 
             except Exception as e:
-                logging.error(f"Error processing lead: {e}", exc_info=True)
+                logger.error(f"Error processing lead: {e}", exc_info=True)
 
-        logging.info(f" Completed sheet {sheet_id} | processed={len(results)}")
+        logger.info(f" Completed sheet {sheet_id} | processed={len(results)}")
 
         return {"processed": len(results), "results": results}
 
     except Exception as e:
-        logging.error(f" Fatal error: {e}", exc_info=True)
+        logger.error(f" Fatal error: {e}", exc_info=True)
         return {"error": str(e)}
 
 # ================= POST CALL WEBHOOK =================
 @Router.post("/post-call")
 async def post_call_update(request: Request):
     try:
-        logging.info("Post-call webhook received")
+        logger.info("Post-call webhook received")
 
         data = await request.json()
         payload = data.get("data", {})
@@ -173,14 +173,14 @@ async def post_call_update(request: Request):
                     
                     row_id = idx
                     sheet = temp_sheet
-                    logging.info(f"Match found in sheet {s['id']} row {row_id}")
+                    logger.info(f"Match found in sheet {s['id']} row {row_id}")
                     break
 
             if row_id:
                 break
 
         if not row_id or not sheet:
-            logging.warning("No matching lead found in any sheet")
+            logger.warning("No matching lead found in any sheet")
             return {"message": "No matching lead"}
 
         # -------- TIME CONVERSION --------
@@ -234,8 +234,7 @@ async def post_call_update(request: Request):
         sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
         # sheet.update(f"U{row_id}", [[analysis.get("called_number", {}).get("value")]])
 
-        
-        logging.info(f" Post-call updated row {row_id}")
+        logger.info(f" Post-call updated row {row_id}")
 
         # -------- UPDATE CALL LOG --------
         conv_id = payload.get("conversation_id")
@@ -255,5 +254,5 @@ async def post_call_update(request: Request):
         return {"status": "updated", "row": row_id}
 
     except Exception as e:
-        logging.error(f" Post-call error: {e}", exc_info=True)
+        logger.error(f" Post-call error: {e}", exc_info=True)
         return {"error": str(e)}

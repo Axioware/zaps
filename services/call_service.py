@@ -1,5 +1,5 @@
 from config.config import ELEVEN_LABS_KEY, ELEVENLABS_URL
-import requests, logging
+import requests, logging, httpx
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,8 +26,9 @@ async def make_call(phone_id, to_number, address, agent_id):
         "xi-api-key": ELEVEN_LABS_KEY,
         "Content-Type": "application/json"
     }
-
-    res = requests.post(ELEVENLABS_URL, json=payload, headers=headers)
+    async with httpx.AsyncClient() as client:
+        res = await client.post(ELEVENLABS_URL, json=payload, headers=headers)
+    # res = requests.post(ELEVENLABS_URL, json=payload, headers=headers)
     if res.status_code != 200:
         logger.error(f"Call failed | status={res.status_code} | response={res.text}")
         return None
