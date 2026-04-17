@@ -27,7 +27,7 @@ def get_client():
 def load_area_code_map():
     logger.info("Loading area code mapping from Google Sheet")
     client = get_client()
-    sheet = client.open_by_key("1MvwpbP9gCsq6ODXTvtqNdWvWiot7iW3SfqmXL6P9Pu8").worksheet("BOT area codes (LIVE)")
+    sheet = client.open_by_key("1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok").worksheet("BOT area codes (LIVE)")
     records = sheet.get_all_records()
     area_map = {}
     number = None

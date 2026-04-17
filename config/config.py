@@ -20,8 +20,8 @@ class Settings:
     ELEVENLABS_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound-call"
     ALAB_SPREADSHEET_NAME="ALab (dialforce) - Nationwide High Intent First only- 03.09.26"
     ALAB_WORKSHEET_NAME="ALab (dialforce) - Nationwide High Intent First only- 03.09.26"
-    MAPPER_SHEET_NAME="Blake Geo Mapper"
-    MAPPER_WORKSHEET_NAME="Sheet1"
+    MAPPER_SHEET_NAME="Sellers First AGENTS"
+    MAPPER_WORKSHEET_NAME="BOT area codes (LIVE)"
 
 settings = Settings()
 
