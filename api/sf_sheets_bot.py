@@ -197,16 +197,11 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
 
 # ═══════════════════════════════════════════════════════════════
 #  POST-CALL WEBHOOK  —  /sf-post-call
-#  Updates the SF Lead record  +  logs to Google Sheets
 # ═══════════════════════════════════════════════════════════════
 @Router.post("/sf-post-call")
 async def sf_post_call(request):
-    """
-    Handles ElevenLabs post-call webhook for salesforce_job calls.
-    Mirrors fus_bot_post_call.py behaviour exactly.
-    """
     try:
-        data    = await request.json()
+        data = await request.json()
         logger.info("SF post-call webhook received")
 
         if not isinstance(data, dict):
@@ -217,20 +212,26 @@ async def sf_post_call(request):
         duration = int(metadata.get("call_duration_secs", 0))
         call_status = str(payload.get("status", "unknown"))
 
-        # ── transcript ────────────────────────────────────────────
+        # ─────────────────────────────────────────────
+        # transcript
+        # ─────────────────────────────────────────────
         transcript_lines = []
         for msg in payload.get("transcript", []):
             role = msg.get("role", "").capitalize()
             text = msg.get("message", "")
             if text:
                 transcript_lines.append(f"{role}: {text}")
+
         transcript_str = "\n".join(transcript_lines) or "No transcript"
 
-        # ── lead_id + conv_id ─────────────────────────────────────
+        # ─────────────────────────────────────────────
+        # lead + conversation info
+        # ─────────────────────────────────────────────
         custom_data = (
             payload.get("conversation_initiation_client_data", {})
                    .get("dynamic_variables", {})
         )
+
         lead_id    = custom_data.get("lead_id")
         conv_id    = payload.get("conversation_id")
         call_count = custom_data.get("call_count", 0)
@@ -239,21 +240,54 @@ async def sf_post_call(request):
             logger.error("SF post-call: missing lead_id")
             return {"error": "Missing lead_id"}
 
-        # ── called_from (look up in call_logs) ────────────────────
+        # ─────────────────────────────────────────────
+        # helper: extract from multiple possible sources
+        # ─────────────────────────────────────────────
+        def get_field(key):
+            return (
+                payload.get("analysis", {})
+                       .get("data_collection_results", {})
+                       .get(key, {})
+                       .get("value")
+                or payload.get("analysis", {})
+                          .get("structured_data", {})
+                          .get(key)
+                or None
+            )
+
+        # ─────────────────────────────────────────────
+        # FULL 8 DATA POINTS
+        # ─────────────────────────────────────────────
+        analysis = {
+            "is_looking_to_sell": get_field("is_looking_to_sell"),
+            "motivation": get_field("motivation"),
+            "fair_cash_price": get_field("fair_cash_price"),
+            "roadblocks": get_field("roadblocks"),
+            "influencer": get_field("influencer"),
+            "timeline": get_field("timeline"),
+            "condition": get_field("condition"),
+            "next_steps": get_field("next_steps"),
+        }
+
+        # ─────────────────────────────────────────────
+        # called_from lookup
+        # ─────────────────────────────────────────────
         called_from = DEFAULT_PHONE
         if conv_id:
             log = get_call_log(conv_id)
             if log:
                 called_from = log.get("from_number") or DEFAULT_PHONE
 
-        # ── update Salesforce lead ────────────────────────────────
+        # ─────────────────────────────────────────────
+        # UPDATE SALESFORCE
+        # ─────────────────────────────────────────────
         access_token = await get_sf_access_token()
         sf_headers   = {"Authorization": f"Bearer {access_token}"}
         update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
 
         sf_payload = {
-            "Call_Duration__c":   float(duration),
-            "Call_Status__c":     call_status,
+            "Call_Duration__c": float(duration),
+            "Call_Status__c": call_status,
             "Call_Transcript__c": transcript_str,
         }
 
@@ -262,50 +296,36 @@ async def sf_post_call(request):
             if patch_res.status_code >= 400:
                 raise Exception(f"Salesforce PATCH error: {patch_res.text}")
 
-            # Fetch fresh lead data for Sheets logging
-            get_res   = await client.get(update_url, headers=sf_headers)
+            get_res = await client.get(update_url, headers=sf_headers)
             lead_info = get_res.json()
 
-        # ── analysis block ────────────────────────────────────────
-        analysis_root    = payload.get("analysis", {})
-        data_collection  = analysis_root.get("data_collection_results", {})
-
-        analysis = {
-            "call_back_time":    data_collection.get("call_back_time",    {}).get("value"),
-            "wrong_call":        data_collection.get("wrong_call",         {}).get("value"),
-            "call_transferred":  str(
-                metadata.get("features_usage", {})
-                        .get("transfer_to_number", {})
-                        .get("used")
-            ),
-        }
-
-        # ── log to Google Sheets ──────────────────────────────────
+        # ─────────────────────────────────────────────
+        # GOOGLE SHEETS LOG
+        # ─────────────────────────────────────────────
         await asyncio.to_thread(
             log_to_sheets,
             lead_info,
             lead_id,
             duration,
             conv_id,
-            call_count   = call_count,
-            called_from  = called_from,
-            analysis     = analysis,
+            call_count=call_count,
+            called_from=called_from,
+            analysis=analysis,
         )
 
-        # ── update call_logs table ────────────────────────────────
+        # ─────────────────────────────────────────────
+        # CALL LOG UPDATE
+        # ─────────────────────────────────────────────
         if conv_id:
             update_call_log(
-                conversation_id  = conv_id,
-                call_disposition = "Answered" if duration > 0 else "Not Answered",
-                duration_secs    = duration,
-                call_status      = call_status,
-                transcript       = transcript_str,
-                wrong_call       = analysis.get("wrong_call"),
-                transfer_used    = analysis.get("call_transferred"),
-                callback_time    = analysis.get("call_back_time"),
+                conversation_id=conv_id,
+                call_disposition="Answered" if duration > 0 else "Not Answered",
+                duration_secs=duration,
+                call_status=call_status,
+                transcript=transcript_str,
             )
 
-        logger.info(f"SF post-call done for lead_id={lead_id}")
+        logger.info(f"SF post-call completed | lead_id={lead_id}")
         return {"status": "success", "duration": duration}
 
     except Exception as e:

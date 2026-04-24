@@ -88,20 +88,17 @@ def get_sheets_client():
 
 
 from datetime import datetime
-
 def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_count=0, called_from=""):
     """
-    Logs call info to Google Sheets.
-
-    analysis: dict containing 'wrong_call', 'call_back_time', 'call_transferred' from ElevenLabs agent
-    call_count: previous call count, will increment if duration > 0
-    called_from: agent number
+    Logs call info + AI extracted deal intelligence to Google Sheets
     """
     try:
         gs_client = get_sheets_client()
 
-        sheet = gs_client.open_by_key("1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok") \
-                 .worksheet("Copy of Call Recording Metrics")
+        sheet = gs_client.open_by_key(
+            "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
+        ).worksheet("Copy of Call Recording Metrics")
+
         logger.info("Google Sheets client initialized")
 
         def safe(val):
@@ -110,46 +107,67 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
             call_count = (call_count or 0) + 1
         headers = sheet.row_values(1)
 
-        transferred = str(analysis.get("call_transferred")).lower() == "true" if analysis else False
+        # ─────────────────────────────────────────────
+        # Disposition logic
+        # ─────────────────────────────────────────────
+        transferred = False
+        if analysis:
+            transferred = str(analysis.get("call_transferred")).lower() == "true"
+
         if duration == 0:
             disposition = "Not Answered"
         elif transferred:
-            disposition = "Voicemail"
+            disposition = "Transferred"
         else:
             disposition = "Answered"
-        
-        # Get current time in Karachi
+
+        # ─────────────────────────────────────────────
+        # Timestamp (LA time)
+        # ─────────────────────────────────────────────
         los_angeles_tz = pytz.timezone("America/Los_Angeles")
         los_angeles_time = datetime.now(los_angeles_tz)
-        timestamp_str = los_angeles_time.strftime("%Y-%m-%d %H:%M:%S PDT")  # PDT = Pacific Daylight Time
+        timestamp_str = los_angeles_time.strftime("%Y-%m-%d %H:%M:%S PDT")
 
-        
+        # ─────────────────────────────────────────────
+        # CORE DATA MAP
+        # ─────────────────────────────────────────────
         data_map = {
+
+            # ── CRM INFO ─────────────────────────────
             "Call ID": safe(conv_id),
-            "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view",
             "Lead Name": safe(lead_info.get("Name")),
             "ACQ Manager": safe(lead_info.get("ACQ_Manager__c")),
             "Property Address": safe(
                 f"{lead_info.get('Street', '')}, {lead_info.get('City', '')}, {lead_info.get('State', '')} {lead_info.get('PostalCode', '')}"
             ),
+            "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view",
+
+            # ── CALL INFO ─────────────────────────────
             "Call Duration": f"{duration}s",
-            "Change of Mind Reason": safe(lead_info.get("Change_of_Mind_Reason__c")),
-            "Is Interested?": safe(lead_info.get("Is_Interested_in_Selling__c")),
-            "Checkback Time": safe(lead_info.get("Check_Back_Time__c")),
-            # "Call Disposition": "Answered" if duration > 0 else "Not Answered",
             "Call Disposition": disposition,
             "Call Count": str(call_count),
-            "Call Back Time": safe(analysis.get("call_back_time") if analysis else ""),
-            "Wrong / DNC": safe(analysis.get("wrong_call") if analysis else ""),
-            "Was it Transferred": safe(analysis.get("call_transferred") if analysis else ""),
             "Called From": safe(called_from),
-            "Timestamp": timestamp_str
+            "Timestamp": timestamp_str,
+
+            # ── EXISTING ANALYSIS ─────────────────────
+            "Is Looking To Sell": safe(analysis.get("is_looking_to_sell") if analysis else ""),
+            "Motivation": safe(analysis.get("motivation") if analysis else ""),
+            "Fair Cash Price": safe(analysis.get("fair_cash_price") if analysis else ""),
+            "Roadblocks": safe(analysis.get("roadblocks") if analysis else ""),
+            "Influencer": safe(analysis.get("influencer") if analysis else ""),
+            "Timeline": safe(analysis.get("timeline") if analysis else ""),
+            "Condition": safe(analysis.get("condition") if analysis else ""),
+            "Next Steps": safe(analysis.get("next_steps") if analysis else ""),
         }
 
+        # ─────────────────────────────────────────────
+        # ORDER ROW BY SHEET HEADERS
+        # ─────────────────────────────────────────────
         row = [data_map.get(col, "") for col in headers]
         logger.info(f"Row before append: {row}")
         sheet.append_row(row, value_input_option="USER_ENTERED")
-        logger.info(f"✅ Sheet updated for lead {lead_id} | Call Count: {call_count}")
+
+        logger.info(f"Sheet updated for lead {lead_id} | Call Count: {call_count}")
 
     except Exception as e:
-        logger.error(f"❌ Google Sheets error: {repr(e)}")
+        logger.error(f"Google Sheets error: {repr(e)}")
