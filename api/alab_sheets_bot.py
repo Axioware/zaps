@@ -67,7 +67,7 @@ async def trigger_calls(sheet_id: int):
             try:
 
                 phone, area = normalize_phone(
-                    lead.get("VALID_PHONES"),
+                    lead.get("VALID_PHONES"),   
                     lead.get("MOBILE_PHONE")
                 )
 

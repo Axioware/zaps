@@ -88,16 +88,28 @@ def get_sheets_client():
 
 
 from datetime import datetime
-def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_count=0, called_from=""):
+def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_count=0, called_from="", sheet_url=None, worksheet_name=None):
     """
     Logs call info + AI extracted deal intelligence to Google Sheets
+    
+    If sheet_url and worksheet_name are provided, logs to that sheet.
+    Otherwise, defaults to the standard metrics sheet.
     """
     try:
+        print(worksheet_name, sheet_url)
         gs_client = get_sheets_client()
 
-        sheet = gs_client.open_by_key(
-            "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
-        ).worksheet("Copy of Call Recording Metrics")
+        # Use custom sheet if provided, otherwise use default
+        if sheet_url and worksheet_name:
+            # Extract sheet key from URL (handles various URL formats)
+            sheet_key = sheet_url.split("/spreadsheets/d/")[-1].split("/")[0] if "/spreadsheets/d/" in sheet_url else sheet_url
+            sheet = gs_client.open_by_key(sheet_key).worksheet(worksheet_name)
+            logger.info(f"Logging to custom sheet: {sheet_key}, worksheet: {worksheet_name}")
+        else:
+            sheet = gs_client.open_by_key(
+                "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
+            ).worksheet("Copy of Call Recording Metrics")
+            logger.info("Logging to default sheet")
 
         logger.info("Google Sheets client initialized")
 
@@ -133,31 +145,36 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
         # ─────────────────────────────────────────────
         data_map = {
 
-            # ── CRM INFO ─────────────────────────────
+            # ── TIMESTAMP & CALL ID ───────────────────
+            "Timestamp": timestamp_str,
             "Call ID": safe(conv_id),
+
+            # ── ANALYSIS DATA ──────────────────────────
+            "Are they looking to sell?": safe(analysis.get("is_looking_to_sell") if analysis else ""),
+            "Is Interested?": safe(analysis.get("is_interested") if analysis else ""),
+            "Motivation": safe(analysis.get("motivation") if analysis else ""),
+            "Fair Cash Price": safe(analysis.get("fair_cash_price") if analysis else ""),
+            "Roadblocks": safe(analysis.get("roadblocks") if analysis else ""),
+            "Influencer": safe(analysis.get("influencer") if analysis else ""),
+            "timeline": safe(analysis.get("timeline") if analysis else ""),
+            "condition": safe(analysis.get("condition") if analysis else ""),
+            "Next Steps": safe(analysis.get("next_steps") if analysis else ""),
+            "Change of Mind Reason": safe(analysis.get("change_of_mind_reason") if analysis else ""),
+            "Checkback Time": safe(analysis.get("checkback_time") if analysis else ""),
+
+            # ── CALL INFO ─────────────────────────────
+            "Called From": safe(called_from),
+            "Call Duration": f"{duration}s",
+            "Call Disposition": disposition,
+            "Call Count": str(call_count),
+
+            # ── CRM INFO ─────────────────────────────
             "Lead Name": safe(lead_info.get("Name")),
             "ACQ Manager": safe(lead_info.get("ACQ_Manager__c")),
             "Property Address": safe(
                 f"{lead_info.get('Street', '')}, {lead_info.get('City', '')}, {lead_info.get('State', '')} {lead_info.get('PostalCode', '')}"
             ),
             "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view",
-
-            # ── CALL INFO ─────────────────────────────
-            "Call Duration": f"{duration}s",
-            "Call Disposition": disposition,
-            "Call Count": str(call_count),
-            "Called From": safe(called_from),
-            "Timestamp": timestamp_str,
-
-            # ── EXISTING ANALYSIS ─────────────────────
-            "Is Looking To Sell": safe(analysis.get("is_looking_to_sell") if analysis else ""),
-            "Motivation": safe(analysis.get("motivation") if analysis else ""),
-            "Fair Cash Price": safe(analysis.get("fair_cash_price") if analysis else ""),
-            "Roadblocks": safe(analysis.get("roadblocks") if analysis else ""),
-            "Influencer": safe(analysis.get("influencer") if analysis else ""),
-            "Timeline": safe(analysis.get("timeline") if analysis else ""),
-            "Condition": safe(analysis.get("condition") if analysis else ""),
-            "Next Steps": safe(analysis.get("next_steps") if analysis else ""),
         }
 
         # ─────────────────────────────────────────────

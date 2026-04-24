@@ -23,11 +23,13 @@ class SheetCreate(BaseModel):
 
 # ----------- CREATE (Salesforce Job) -----------
 class SalesforceJobCreate(BaseModel):
-    name: str          # display name, stored as worksheet_name
+    name: str                      # display name, stored as worksheet_name
     agent_id: str
-    query: str         # SOQL query
+    query: str                     # SOQL query to fetch leads
     status: bool = True
     schedule: Dict[str, DaySchedule]
+    postcall_sheet_url: Optional[str] = None      # Google Sheet URL for post-call logging
+    postcall_worksheet_name: Optional[str] = None # Worksheet name for post-call logging
 
 
 # ----------- UPDATE -----------
@@ -38,6 +40,8 @@ class SheetUpdate(BaseModel):
     status: Optional[bool] = None
     query: Optional[str] = None
     schedule: Optional[Dict[str, DaySchedule]] = None
+    postcall_sheet_url: Optional[str] = None
+    postcall_worksheet_name: Optional[str] = None
 
 
 class SheetStatusUpdate(BaseModel):
@@ -96,17 +100,21 @@ def create_salesforce_job(data: SalesforceJobCreate):
       - agent_id   → ElevenLabs agent ID
       - query      → SOQL query to fetch leads
       - schedule   → day → { start, end }
+      - postcall_sheet_url      → optional Google Sheet URL for post-call logging
+      - postcall_worksheet_name → optional worksheet name for post-call logging
     """
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query)
-            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, postcall_sheet_url, postcall_worksheet_name)
+            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s)
             RETURNING id
         """, (
             data.name,
             data.agent_id,
             data.status,
             data.query,
+            data.postcall_sheet_url,
+            data.postcall_worksheet_name,
         ))
         sheet_id = cursor.fetchone()[0]
         _insert_schedules(conn, sheet_id, data.schedule)

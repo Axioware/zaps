@@ -85,6 +85,8 @@ def init_db():
             last_status TEXT,
             type TEXT NOT NULL DEFAULT 'google_sheet_job',
             query TEXT,
+            postcall_sheet_url TEXT,
+            postcall_worksheet_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -103,6 +105,17 @@ def init_db():
         conn.execute("""
             ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
             query TEXT
+        """)
+
+        # For salesforce_job: optional Google Sheet for post-call logging
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            postcall_sheet_url TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            postcall_worksheet_name TEXT
         """)
 
         conn.execute("""

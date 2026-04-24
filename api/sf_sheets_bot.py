@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 
 import pytz
-from fastapi import APIRouter
+from fastapi import APIRouter,Request
 
 from clients.client import get_client
 from config.config import DEFAULT_PHONE, SF_INSTANCE_URL, ELEVEN_LABS_KEY
@@ -199,7 +199,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
 #  POST-CALL WEBHOOK  —  /sf-post-call
 # ═══════════════════════════════════════════════════════════════
 @Router.post("/sf-post-call")
-async def sf_post_call(request):
+async def sf_post_call(request: Request):
     try:
         data = await request.json()
         logger.info("SF post-call webhook received")
@@ -256,10 +256,11 @@ async def sf_post_call(request):
             )
 
         # ─────────────────────────────────────────────
-        # FULL 8 DATA POINTS
+        # FULL DATA POINTS (matching sheet columns)
         # ─────────────────────────────────────────────
         analysis = {
             "is_looking_to_sell": get_field("is_looking_to_sell"),
+            "is_interested": get_field("is_interested"),
             "motivation": get_field("motivation"),
             "fair_cash_price": get_field("fair_cash_price"),
             "roadblocks": get_field("roadblocks"),
@@ -267,50 +268,73 @@ async def sf_post_call(request):
             "timeline": get_field("timeline"),
             "condition": get_field("condition"),
             "next_steps": get_field("next_steps"),
+            "change_of_mind_reason": get_field("change_of_mind_reason"),
+            "checkback_time": get_field("checkback_time"),
         }
 
         # ─────────────────────────────────────────────
-        # called_from lookup
+        # called_from lookup + get sheet_id for postcall config
         # ─────────────────────────────────────────────
         called_from = DEFAULT_PHONE
+        sheet_id = None
+        postcall_sheet_url = None
+        postcall_worksheet_name = None
+        
         if conv_id:
             log = get_call_log(conv_id)
             if log:
                 called_from = log.get("from_number") or DEFAULT_PHONE
+                sheet_id = log.get("sheet_id")
+
+        print(sheet_id, conv_id)
+        
+        # Get postcall sheet configuration from the salesforce_job if available
+        if sheet_id:
+            with get_connection() as conn:
+                job_row = conn.execute(
+                    "SELECT postcall_sheet_url, postcall_worksheet_name FROM sheets WHERE id=%s",
+                    (sheet_id,),
+                ).fetchone()
+                if job_row:
+                    postcall_sheet_url = job_row.get("postcall_sheet_url")
+                    postcall_worksheet_name = job_row.get("postcall_worksheet_name")
+                    logger.info(f"Using postcall sheet: {postcall_sheet_url}, worksheet: {postcall_worksheet_name}")
 
         # ─────────────────────────────────────────────
         # UPDATE SALESFORCE
         # ─────────────────────────────────────────────
-        access_token = await get_sf_access_token()
-        sf_headers   = {"Authorization": f"Bearer {access_token}"}
-        update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
+        # access_token = await get_sf_access_token()
+        # sf_headers   = {"Authorization": f"Bearer {access_token}"}
+        # update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
 
-        sf_payload = {
-            "Call_Duration__c": float(duration),
-            "Call_Status__c": call_status,
-            "Call_Transcript__c": transcript_str,
-        }
+        # sf_payload = {
+        #     "Call_Duration__c": float(duration),
+        #     "Call_Status__c": call_status,
+        #     "Call_Transcript__c": transcript_str,
+        # }
 
-        async with get_client() as client:
-            patch_res = await client.patch(update_url, json=sf_payload, headers=sf_headers)
-            if patch_res.status_code >= 400:
-                raise Exception(f"Salesforce PATCH error: {patch_res.text}")
+        # async with get_client() as client:
+        #     patch_res = await client.patch(update_url, json=sf_payload, headers=sf_headers)
+        #     if patch_res.status_code >= 400:
+        #         raise Exception(f"Salesforce PATCH error: {patch_res.text}")
 
-            get_res = await client.get(update_url, headers=sf_headers)
-            lead_info = get_res.json()
+        #     get_res = await client.get(update_url, headers=sf_headers)
+        #     lead_info = get_res.json()
 
         # ─────────────────────────────────────────────
         # GOOGLE SHEETS LOG
         # ─────────────────────────────────────────────
         await asyncio.to_thread(
             log_to_sheets,
-            lead_info,
+            "lead_info",
             lead_id,
             duration,
             conv_id,
             call_count=call_count,
             called_from=called_from,
             analysis=analysis,
+            sheet_url=postcall_sheet_url,
+            worksheet_name=postcall_worksheet_name,
         )
 
         # ─────────────────────────────────────────────
