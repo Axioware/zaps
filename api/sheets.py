@@ -1,5 +1,3 @@
-from os import times
-
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -7,17 +5,27 @@ from config.database import get_connection
 
 router = APIRouter()
 
+
 # ----------- INNER MODEL -----------
 class DaySchedule(BaseModel):
     start: str
     end: str
 
 
-# ----------- CREATE -----------
+# ----------- CREATE (Google Sheet Job) -----------
 class SheetCreate(BaseModel):
     google_sheet_url: str
     worksheet_name: str
     agent_id: str
+    status: bool = True
+    schedule: Dict[str, DaySchedule]
+
+
+# ----------- CREATE (Salesforce Job) -----------
+class SalesforceJobCreate(BaseModel):
+    name: str          # display name, stored as worksheet_name
+    agent_id: str
+    query: str         # SOQL query
     status: bool = True
     schedule: Dict[str, DaySchedule]
 
@@ -28,6 +36,7 @@ class SheetUpdate(BaseModel):
     worksheet_name: Optional[str] = None
     agent_id: Optional[str] = None
     status: Optional[bool] = None
+    query: Optional[str] = None
     schedule: Optional[Dict[str, DaySchedule]] = None
 
 
@@ -35,15 +44,32 @@ class SheetStatusUpdate(BaseModel):
     status: bool
 
 
-# ------------------- CREATE -------------------
+# ═══════════════════════════════════════════════════════
+#  HELPERS
+# ═══════════════════════════════════════════════════════
+
+def _insert_schedules(conn, sheet_id: int, schedule: Dict[str, DaySchedule]):
+    for day, times in schedule.items():
+        start = times.start
+        end = times.end
+        if start == end == "00:00":
+            continue
+        conn.execute("""
+            INSERT INTO sheet_schedules (sheet_id, day_of_week, start_time, end_time)
+            VALUES (%s, %s, %s, %s)
+        """, (sheet_id, day.lower(), start, end))
+
+
+# ═══════════════════════════════════════════════════════
+#  CREATE — Google Sheet Job
+# ═══════════════════════════════════════════════════════
+
 @router.post("/sheets")
 def create_sheet(data: SheetCreate):
-    last_id = None
     with get_connection() as conn:
-        # Insert main sheet info
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query)
+            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL)
             RETURNING id
         """, (
             data.google_sheet_url,
@@ -52,39 +78,68 @@ def create_sheet(data: SheetCreate):
             data.status,
         ))
         sheet_id = cursor.fetchone()[0]
-
-        # Insert schedule into sheet_schedules
-        for day, times in data.schedule.items():
-            start = times.start
-            end = times.end
-            if start == end == "00:00":
-                continue
-            conn.execute("""
-                INSERT INTO sheet_schedules (sheet_id, day_of_week, start_time, end_time)
-                VALUES (%s, %s, %s, %s)
-            """, (sheet_id, day, start, end))
-
+        _insert_schedules(conn, sheet_id, data.schedule)
         conn.commit()
 
-    return {"id": sheet_id, "message": "Sheet added successfully"}
+    return {"id": sheet_id, "message": "Sheet job added successfully"}
 
 
-# ------------------- GET -------------------
+# ═══════════════════════════════════════════════════════
+#  CREATE — Salesforce Job
+# ═══════════════════════════════════════════════════════
+
+@router.post("/sheets/salesforce")
+def create_salesforce_job(data: SalesforceJobCreate):
+    """
+    Frontend form fields:
+      - name       → stored as worksheet_name (display only)
+      - agent_id   → ElevenLabs agent ID
+      - query      → SOQL query to fetch leads
+      - schedule   → day → { start, end }
+    """
+    with get_connection() as conn:
+        cursor = conn.execute("""
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query)
+            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s)
+            RETURNING id
+        """, (
+            data.name,
+            data.agent_id,
+            data.status,
+            data.query,
+        ))
+        sheet_id = cursor.fetchone()[0]
+        _insert_schedules(conn, sheet_id, data.schedule)
+        conn.commit()
+
+    return {"id": sheet_id, "message": "Salesforce job added successfully"}
+
+
+# ═══════════════════════════════════════════════════════
+#  GET — All Jobs (both types)
+# ═══════════════════════════════════════════════════════
+
 @router.get("/sheets")
 def get_sheets(
     status: Optional[bool] = Query(None),
+    type: Optional[str] = Query(None),   # 'google_sheet_job' or 'salesforce_job'
     limit: int = 10,
     offset: int = 0
 ):
     with get_connection() as conn:
-        query = "SELECT * FROM sheets"
+        conditions = []
         params = []
 
         if status is not None:
-            query += " WHERE status=%s"
+            conditions.append("status=%s")
             params.append(status)
 
-        query += " LIMIT %s OFFSET %s"
+        if type is not None:
+            conditions.append("type=%s")
+            params.append(type)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f"SELECT * FROM sheets {where_clause} ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         rows = conn.execute(query, params).fetchall()
@@ -96,48 +151,48 @@ def get_sheets(
                 "SELECT day_of_week, start_time, end_time FROM sheet_schedules WHERE sheet_id=%s",
                 (sheet["id"],)
             ).fetchall()
-            sheet["schedule"] = {r["day_of_week"]: {"start": r["start_time"], "end": r["end_time"]} for r in schedule_rows}
+            sheet["schedule"] = {
+                r["day_of_week"]: {"start": r["start_time"], "end": r["end_time"]}
+                for r in schedule_rows
+            }
 
     return sheets
 
 
-# ------------------- UPDATE -------------------
+# ═══════════════════════════════════════════════════════
+#  UPDATE
+# ═══════════════════════════════════════════════════════
+
 @router.put("/sheets/{sheet_id}")
 def update_sheet(sheet_id: int, data: SheetUpdate):
     with get_connection() as conn:
-        # Update main sheet info
         fields = []
         values = []
+
         for key, value in data.dict(exclude_none=True, exclude={"schedule"}).items():
             fields.append(f"{key}=%s")
             values.append(value)
 
         if fields:
             values.append(sheet_id)
-            conn.execute(f"UPDATE sheets SET {', '.join(fields)} WHERE id=%s", values)
+            conn.execute(
+                f"UPDATE sheets SET {', '.join(fields)} WHERE id=%s",
+                values
+            )
 
-        # Update schedule if provided
-        if data.schedule:
-            # Delete old schedules for this sheet
+        if data.schedule is not None:
             conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=%s", (sheet_id,))
-
-            # Insert new schedules
-            for day, times in data.schedule.items():
-                start = times.start
-                end = times.end
-                if start == end == "00:00":
-                    continue
-                conn.execute("""
-                    INSERT INTO sheet_schedules (sheet_id, day_of_week, start_time, end_time)
-                    VALUES (%s, %s, %s, %s)
-                """, (sheet_id, day, start, end))
+            _insert_schedules(conn, sheet_id, data.schedule)
 
         conn.commit()
 
     return {"message": "Sheet updated"}
 
 
-# ------------------- TOGGLE -------------------
+# ═══════════════════════════════════════════════════════
+#  TOGGLE STATUS
+# ═══════════════════════════════════════════════════════
+
 @router.patch("/sheets/{sheet_id}/status")
 def toggle_status(sheet_id: int, data: SheetStatusUpdate):
     with get_connection() as conn:
@@ -150,11 +205,15 @@ def toggle_status(sheet_id: int, data: SheetStatusUpdate):
     return {"message": "Status updated"}
 
 
-# ------------------- DELETE -------------------
+# ═══════════════════════════════════════════════════════
+#  DELETE
+# ═══════════════════════════════════════════════════════
+
 @router.delete("/sheets/{sheet_id}")
 def delete_sheet(sheet_id: int):
     with get_connection() as conn:
         conn.execute("DELETE FROM sheet_schedules WHERE sheet_id=%s", (sheet_id,))
         conn.execute("DELETE FROM sheets WHERE id=%s", (sheet_id,))
         conn.commit()
+
     return {"message": "Sheet deleted"}

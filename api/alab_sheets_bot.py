@@ -29,7 +29,7 @@ async def trigger_calls(sheet_id: int):
         # -------- LOAD SHEET FROM DB --------
         with get_connection() as conn:
             sheet_data = conn.execute(
-                "SELECT * FROM sheets WHERE id=%s",
+                "SELECT * FROM sheets WHERE id=%s AND type='google_sheet_job'",
                 (sheet_id,)
             ).fetchone()
 

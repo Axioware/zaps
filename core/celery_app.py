@@ -7,6 +7,7 @@ import asyncio
 
 from config.database import get_connection
 from api.alab_sheets_bot import trigger_calls
+from api.sf_sheets_bot import trigger_sf_calls         # salesforce_job  ← NEW
 
 # ------------------- LOGGING -------------------
 logging.basicConfig(level=logging.INFO)
@@ -41,8 +42,9 @@ def run_scheduler(self):
 
             for sheet in sheets:
                 sheet_id = sheet["id"]
+                job_type = sheet["type"] or "google_sheet_job"   # ← NEW
 
-                logger.info(f"Checking sheet {sheet_id}")
+                logger.info(f"Checking sheet {sheet_id} (type={job_type})")
 
                 schedules = conn.execute("""
                     SELECT * FROM sheet_schedules
@@ -50,22 +52,20 @@ def run_scheduler(self):
                 """, (sheet_id, today)).fetchall()
 
                 if not schedules:
-                    logger.info(f"⏭ Skipping sheet {sheet_id} (no schedule today)")
+                    logger.info(f"Skipping sheet {sheet_id} (no schedule today)")
                     continue
 
                 for sched in schedules:
                     start_time = sched["start_time"]
                     end_time = sched["end_time"]
 
-                    # Inactive day
                     if start_time == "00:00" and end_time == "00:00":
-                        logger.info(f"⏭ Sheet {sheet_id} inactive today")
+                        logger.info(f"Sheet {sheet_id} inactive today")
                         continue
 
                     start_dt = datetime.strptime(start_time, "%H:%M").time()
                     end_dt = datetime.strptime(end_time, "%H:%M").time()
 
-                    # Window check (handles overnight)
                     if start_dt <= end_dt:
                         in_window = start_dt <= now_time_only <= end_dt
                     else:
@@ -73,36 +73,31 @@ def run_scheduler(self):
 
                     if not in_window:
                         logger.info(
-                            f"⏭ Sheet {sheet_id} خارج window "
+                            f"Sheet {sheet_id} outside window "
                             f"{start_time}-{end_time} (now {now_time_only.strftime('%H:%M')})"
                         )
                         continue
 
-                    # ------------------- LAST RUN CHECK -------------------
+                    # ── last-run guard (2-min cooldown) ──
                     last_run = sheet["last_run"]
                     if last_run:
                         try:
                             last_run_dt = datetime.fromisoformat(last_run)
-
                             if last_run_dt.tzinfo is None:
                                 last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
-
                             last_run_local = last_run_dt.astimezone(LOCAL_TZ)
 
                             if (now_local - last_run_local) < timedelta(minutes=2):
                                 logger.info(
-                                    f"⏭ Skipping sheet {sheet_id} "
-                                    f"(already ran at {last_run_local.strftime('%H:%M')})"
+                                    f"Skipping sheet {sheet_id} "
+                                    f"(ran at {last_run_local.strftime('%H:%M')})"
                                 )
                                 continue
-
                         except Exception as e:
-                            logger.warning(
-                                f"Invalid last_run for sheet {sheet_id}: {e}"
-                            )
+                            logger.warning(f"Invalid last_run for sheet {sheet_id}: {e}")
 
-                    # ------------------- EXECUTE -------------------
-                    process_sheet.delay(sheet_id)
+                    # ── dispatch to the right worker ──────────────── NEW
+                    process_sheet.delay(sheet_id, job_type)
 
                     conn.execute(
                         "UPDATE sheets SET last_run=%s WHERE id=%s",
@@ -118,20 +113,31 @@ def run_scheduler(self):
 
 # ------------------- WORKER TASK -------------------
 @celery.task(bind=True, max_retries=3)
-def process_sheet(self, sheet_id):
+def process_sheet(self, sheet_id: int, job_type: str = "google_sheet_job"):
+    """
+    Route to the correct async workflow based on job_type.
+
+      google_sheet_job  →  trigger_calls()       (alab_sheets_bot)
+      salesforce_job    →  trigger_sf_calls()    (sf_sheets_bot)
+    """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         try:
-            loop.run_until_complete(trigger_calls(sheet_id))
+            if job_type == "salesforce_job":
+                logger.info(f"Running salesforce_job for sheet_id={sheet_id}")
+                loop.run_until_complete(trigger_sf_calls(sheet_id))
+            else:
+                logger.info(f"Running google_sheet_job for sheet_id={sheet_id}")
+                loop.run_until_complete(trigger_calls(sheet_id))
         finally:
             loop.close()
 
-        logger.info(f"Completed sheet {sheet_id}")
+        logger.info(f"Completed sheet_id={sheet_id} (type={job_type})")
 
     except Exception as e:
-        logger.error(f"Sheet {sheet_id} error: {e}")
+        logger.error(f"Sheet {sheet_id} error: {e}", exc_info=True)
         raise self.retry(countdown=20)
 
 

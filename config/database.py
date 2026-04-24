@@ -72,22 +72,47 @@ def init_db():
         """)
 
         # ---------- SHEETS ----------
+        # type:  'google_sheet_job' (default) | 'salesforce_job'
+        # query: NULL for sheet jobs, SOQL string for salesforce jobs
         conn.execute("""
         CREATE TABLE IF NOT EXISTS sheets (
             id SERIAL PRIMARY KEY,
-            google_sheet_url TEXT NOT NULL,
+            google_sheet_url TEXT,
             worksheet_name TEXT NOT NULL,
             agent_id TEXT NOT NULL,
             status BOOLEAN DEFAULT TRUE,
             last_run TIMESTAMP,
             last_status TEXT,
+            type TEXT NOT NULL DEFAULT 'google_sheet_job',
+            query TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+        """)
+
+        # Drop NOT NULL on google_sheet_url for existing databases
+        conn.execute("""
+            ALTER TABLE sheets ALTER COLUMN google_sheet_url DROP NOT NULL
+        """)
+
+        # Migrate existing tables that don't have the new columns yet
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            type TEXT NOT NULL DEFAULT 'google_sheet_job'
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            query TEXT
         """)
 
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_sheets_status
         ON sheets(status)
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sheets_type
+        ON sheets(type)
         """)
 
         # ---------- SCHEDULE TABLE ----------
@@ -212,7 +237,8 @@ def create_call_log(conversation_id: str, to_number: str, from_number: str = Non
 
 def update_call_log(conversation_id: str, call_disposition: str = None, duration_secs: int = None,
                     call_status: str = None, wrong_call: str = None, wants_to_sell: str = None,
-                    callback_time: str = None, transfer_used: str = None, transcript: str = None, timestamp_str: str = None):
+                    callback_time: str = None, transfer_used: str = None, transcript: str = None,
+                    timestamp_str: str = None):
     try:
         if timestamp_str is None:
             karachi_tz = pytz.timezone("Asia/Karachi")
@@ -232,7 +258,8 @@ def update_call_log(conversation_id: str, call_disposition: str = None, duration
                    updated_at       = %s
                    WHERE conversation_id = %s""",
                 (call_disposition, duration_secs, call_status, wrong_call,
-                 wants_to_sell, callback_time, transfer_used, transcript, timestamp_str, conversation_id)
+                 wants_to_sell, callback_time, transfer_used, transcript,
+                 timestamp_str, conversation_id)
             )
             conn.commit()
             logger.info(f"Call log updated: {conversation_id}")
