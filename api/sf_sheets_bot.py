@@ -247,16 +247,16 @@ async def sf_post_call(request: Request):
                 or None
             )
 
-        # ─────────────────────────────────────────────
+        
         # evaluation criteria results
-        # ─────────────────────────────────────────────
+        
         evaluation_results = payload.get("analysis", {}).get("evaluation_criteria_results", {})
         call_interrupted   = evaluation_results.get("call_interupted", {}).get("result", "")
         frustrated_with_ai = evaluation_results.get("frustrated_with_ai", {}).get("result", "")
 
-        # ─────────────────────────────────────────────
+        
         # FULL DATA POINTS (matching sheet columns)
-        # ─────────────────────────────────────────────
+        
         analysis = {
             "is_looking_to_sell":    get_field("is_looking_to_sell"),
             "is_interested":         get_field("is_interested"),
@@ -273,9 +273,9 @@ async def sf_post_call(request: Request):
             "frustrated_with_ai":    frustrated_with_ai,
         }
 
-        # ─────────────────────────────────────────────
+        
         # called_from lookup + get sheet_id for postcall config
-        # ─────────────────────────────────────────────
+        
         called_from             = DEFAULT_PHONE
         sheet_id                = None
         postcall_sheet_url      = None
@@ -300,9 +300,9 @@ async def sf_post_call(request: Request):
                     postcall_worksheet_name = job_row.get("postcall_worksheet_name")
                     logger.info(f"Using postcall sheet: {postcall_sheet_url}, worksheet: {postcall_worksheet_name}")
 
-        # ─────────────────────────────────────────────
+        
         # UPDATE SALESFORCE
-        # ─────────────────────────────────────────────
+        
         access_token = await get_sf_access_token()
         sf_headers   = {"Authorization": f"Bearer {access_token}"}
         update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
@@ -323,9 +323,9 @@ async def sf_post_call(request: Request):
             get_res   = await client.get(update_url, headers=sf_headers)
             lead_info = get_res.json()
 
-        # ─────────────────────────────────────────────
+        
         # GOOGLE SHEETS LOG
-        # ─────────────────────────────────────────────
+        
         await asyncio.to_thread(
             log_to_sheets,
             lead_info,
@@ -339,9 +339,9 @@ async def sf_post_call(request: Request):
             worksheet_name=postcall_worksheet_name,
         )
 
-        # ─────────────────────────────────────────────
+        
         # CALL LOG UPDATE
-        # ─────────────────────────────────────────────
+        
         if conv_id:
             update_call_log(
                 conversation_id=conv_id,
