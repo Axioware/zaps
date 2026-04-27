@@ -31,7 +31,6 @@ def run_scheduler(self):
     now_local = datetime.now(LOCAL_TZ)
     now_time_only = now_local.time()
     today = now_local.strftime("%A").lower()
-
     logger.info(f"Scheduler running at {now_local.isoformat()}")
 
     try:
@@ -42,7 +41,7 @@ def run_scheduler(self):
 
             for sheet in sheets:
                 sheet_id = sheet["id"]
-                job_type = sheet["type"] or "google_sheet_job"   # ← NEW
+                job_type = sheet["type"] or "google_sheet_job"
 
                 logger.info(f"Checking sheet {sheet_id} (type={job_type})")
 
@@ -57,14 +56,14 @@ def run_scheduler(self):
 
                 for sched in schedules:
                     start_time = sched["start_time"]
-                    end_time = sched["end_time"]
+                    end_time   = sched["end_time"]
 
                     if start_time == "00:00" and end_time == "00:00":
                         logger.info(f"Sheet {sheet_id} inactive today")
                         continue
 
                     start_dt = datetime.strptime(start_time, "%H:%M").time()
-                    end_dt = datetime.strptime(end_time, "%H:%M").time()
+                    end_dt   = datetime.strptime(end_time,   "%H:%M").time()
 
                     if start_dt <= end_dt:
                         in_window = start_dt <= now_time_only <= end_dt
@@ -79,37 +78,43 @@ def run_scheduler(self):
                         continue
 
                     # ── last-run guard (2-min cooldown) ──
-                    last_run = sheet["last_run"]
-                    if last_run:
-                        try:
-                            last_run_dt = datetime.fromisoformat(last_run)
-                            if last_run_dt.tzinfo is None:
-                                last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
-                            last_run_local = last_run_dt.astimezone(LOCAL_TZ)
+                    last_run_raw = sheet["last_run"]
+                    last_run_dt  = None
 
-                            if (now_local - last_run_local) < timedelta(minutes=2):
-                                logger.info(
-                                    f"Skipping sheet {sheet_id} "
-                                    f"(ran at {last_run_local.strftime('%H:%M')})"
-                                )
-                                continue
-                        except Exception as e:
-                            logger.warning(f"Invalid last_run for sheet {sheet_id}: {e}")
+                    if last_run_raw:
+                        if isinstance(last_run_raw, str):
+                            try:
+                                last_run_dt = datetime.fromisoformat(last_run_raw)
+                            except Exception as e:
+                                logger.warning(f"Invalid last_run for sheet {sheet_id}: {e}")
+                        elif hasattr(last_run_raw, 'year'):  # datetime object from DB
+                            last_run_dt = last_run_raw
 
-                    # ── dispatch to the right worker ──────────────── NEW
-                    process_sheet.delay(sheet_id, job_type)
+                    if last_run_dt:
+                        if last_run_dt.tzinfo is None:
+                            last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
+                        last_run_local = last_run_dt.astimezone(LOCAL_TZ)
+                        if (now_local - last_run_local) < timedelta(minutes=2):
+                            logger.info(
+                                f"Skipping sheet {sheet_id} "
+                                f"(ran at {last_run_local.strftime('%H:%M')})"
+                            )
+                            continue
 
+                    # ── stamp last_run BEFORE dispatching to block duplicate fires ──
                     conn.execute(
                         "UPDATE sheets SET last_run=%s WHERE id=%s",
                         (datetime.now(timezone.utc).isoformat(), sheet_id)
                     )
+                    conn.commit()
 
-            conn.commit()
+                    # ── dispatch to the right worker ──
+                    process_sheet.delay(sheet_id, job_type)
+                    logger.info(f"Dispatched sheet {sheet_id} (type={job_type})")
 
     except Exception as e:
         logger.error(f"Scheduler failure: {e}", exc_info=True)
         raise self.retry(countdown=10)
-
 
 # ------------------- WORKER TASK -------------------
 @celery.task(bind=True, max_retries=3)

@@ -87,7 +87,7 @@ def get_sheets_client():
     return _gs_client
 
 
-from datetime import datetime
+
 def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_count=0, called_from="", sheet_url=None, worksheet_name=None):
     """
     Logs call info + AI extracted deal intelligence to Google Sheets
@@ -119,9 +119,9 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
             call_count = (call_count or 0) + 1
         headers = sheet.row_values(1)
 
-        # ─────────────────────────────────────────────
+        #
         # Disposition logic
-        # ─────────────────────────────────────────────
+        #
         transferred = False
         if analysis:
             transferred = str(analysis.get("call_transferred")).lower() == "true"
@@ -133,22 +133,26 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
         else:
             disposition = "Answered"
 
-        # ─────────────────────────────────────────────
+        #
         # Timestamp (LA time)
-        # ─────────────────────────────────────────────
+        #
         los_angeles_tz = pytz.timezone("America/Los_Angeles")
         los_angeles_time = datetime.now(los_angeles_tz)
         timestamp_str = los_angeles_time.strftime("%Y-%m-%d %H:%M:%S PDT")
 
-        # ─────────────────────────────────────────────
+        #
         # CORE DATA MAP
-        # ─────────────────────────────────────────────
+        #
         data_map = {
 
             # ── TIMESTAMP & CALL ID ───────────────────
             "Timestamp": timestamp_str,
             "Call ID": safe(conv_id),
 
+             # ── EVALUATION CRITERIA ───────────────────
+            "Call Interrupted":        safe(analysis.get("call_interrupted") if analysis else ""),
+            "Frustrated With AI":      safe(analysis.get("frustrated_with_ai") if analysis else ""),
+            
             # ── ANALYSIS DATA ──────────────────────────
             "Are they looking to sell?": safe(analysis.get("is_looking_to_sell") if analysis else ""),
             "Is Interested?": safe(analysis.get("is_interested") if analysis else ""),
@@ -177,9 +181,9 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
             "Link to Profile": f"https://leftmain-4606.lightning.force.com/lightning/r/Lead/{lead_id}/view",
         }
 
-        # ─────────────────────────────────────────────
+        #
         # ORDER ROW BY SHEET HEADERS
-        # ─────────────────────────────────────────────
+        #
         row = [data_map.get(col, "") for col in headers]
         logger.info(f"Row before append: {row}")
         sheet.append_row(row, value_input_option="USER_ENTERED")

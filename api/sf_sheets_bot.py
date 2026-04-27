@@ -195,9 +195,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
     logger.info(f"SF lead {lead_id} processed, conv_id={conv_id}")
 
 
-# ═══════════════════════════════════════════════════════════════
 #  POST-CALL WEBHOOK  —  /sf-post-call
-# ═══════════════════════════════════════════════════════════════
 @Router.post("/sf-post-call")
 async def sf_post_call(request: Request):
     try:
@@ -207,14 +205,12 @@ async def sf_post_call(request: Request):
         if not isinstance(data, dict):
             return {"error": "Invalid payload"}
 
-        payload  = data.get("data", {})
-        metadata = payload.get("metadata", {})
-        duration = int(metadata.get("call_duration_secs", 0))
+        payload     = data.get("data", {})
+        metadata    = payload.get("metadata", {})
+        duration    = int(metadata.get("call_duration_secs", 0))
         call_status = str(payload.get("status", "unknown"))
 
-        # ─────────────────────────────────────────────
         # transcript
-        # ─────────────────────────────────────────────
         transcript_lines = []
         for msg in payload.get("transcript", []):
             role = msg.get("role", "").capitalize()
@@ -224,9 +220,7 @@ async def sf_post_call(request: Request):
 
         transcript_str = "\n".join(transcript_lines) or "No transcript"
 
-        # ─────────────────────────────────────────────
         # lead + conversation info
-        # ─────────────────────────────────────────────
         custom_data = (
             payload.get("conversation_initiation_client_data", {})
                    .get("dynamic_variables", {})
@@ -240,9 +234,7 @@ async def sf_post_call(request: Request):
             logger.error("SF post-call: missing lead_id")
             return {"error": "Missing lead_id"}
 
-        # ─────────────────────────────────────────────
         # helper: extract from multiple possible sources
-        # ─────────────────────────────────────────────
         def get_field(key):
             return (
                 payload.get("analysis", {})
@@ -256,39 +248,47 @@ async def sf_post_call(request: Request):
             )
 
         # ─────────────────────────────────────────────
+        # evaluation criteria results
+        # ─────────────────────────────────────────────
+        evaluation_results = payload.get("analysis", {}).get("evaluation_criteria_results", {})
+        call_interrupted   = evaluation_results.get("call_interupted", {}).get("result", "")
+        frustrated_with_ai = evaluation_results.get("frustrated_with_ai", {}).get("result", "")
+
+        # ─────────────────────────────────────────────
         # FULL DATA POINTS (matching sheet columns)
         # ─────────────────────────────────────────────
         analysis = {
-            "is_looking_to_sell": get_field("is_looking_to_sell"),
-            "is_interested": get_field("is_interested"),
-            "motivation": get_field("motivation"),
-            "fair_cash_price": get_field("fair_cash_price"),
-            "roadblocks": get_field("roadblocks"),
-            "influencer": get_field("influencer"),
-            "timeline": get_field("timeline"),
-            "condition": get_field("condition"),
-            "next_steps": get_field("next_steps"),
+            "is_looking_to_sell":    get_field("is_looking_to_sell"),
+            "is_interested":         get_field("is_interested"),
+            "motivation":            get_field("motivation"),
+            "fair_cash_price":       get_field("fair_cash_price"),
+            "roadblocks":            get_field("roadblocks"),
+            "influencer":            get_field("influencer"),
+            "timeline":              get_field("timeline"),
+            "condition":             get_field("condition"),
+            "next_steps":            get_field("next_steps"),
             "change_of_mind_reason": get_field("change_of_mind_reason"),
-            "checkback_time": get_field("checkback_time"),
+            "checkback_time":        get_field("checkback_time"),
+            "call_interrupted":      call_interrupted,
+            "frustrated_with_ai":    frustrated_with_ai,
         }
 
         # ─────────────────────────────────────────────
         # called_from lookup + get sheet_id for postcall config
         # ─────────────────────────────────────────────
-        called_from = DEFAULT_PHONE
-        sheet_id = None
-        postcall_sheet_url = None
+        called_from             = DEFAULT_PHONE
+        sheet_id                = None
+        postcall_sheet_url      = None
         postcall_worksheet_name = None
-        
+
         if conv_id:
             log = get_call_log(conv_id)
             if log:
                 called_from = log.get("from_number") or DEFAULT_PHONE
-                sheet_id = log.get("sheet_id")
+                sheet_id    = log.get("sheet_id")
 
         print(sheet_id, conv_id)
-        
-        # Get postcall sheet configuration from the salesforce_job if available
+
         if sheet_id:
             with get_connection() as conn:
                 job_row = conn.execute(
@@ -296,37 +296,39 @@ async def sf_post_call(request: Request):
                     (sheet_id,),
                 ).fetchone()
                 if job_row:
-                    postcall_sheet_url = job_row.get("postcall_sheet_url")
+                    postcall_sheet_url      = job_row.get("postcall_sheet_url")
                     postcall_worksheet_name = job_row.get("postcall_worksheet_name")
                     logger.info(f"Using postcall sheet: {postcall_sheet_url}, worksheet: {postcall_worksheet_name}")
 
         # ─────────────────────────────────────────────
         # UPDATE SALESFORCE
         # ─────────────────────────────────────────────
-        # access_token = await get_sf_access_token()
-        # sf_headers   = {"Authorization": f"Bearer {access_token}"}
-        # update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
+        access_token = await get_sf_access_token()
+        sf_headers   = {"Authorization": f"Bearer {access_token}"}
+        update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
 
-        # sf_payload = {
-        #     "Call_Duration__c": float(duration),
-        #     "Call_Status__c": call_status,
-        #     "Call_Transcript__c": transcript_str,
-        # }
+        sf_payload = {
+            "Call_Duration__c":               float(duration),
+            "Call_Status__c":                 call_status,
+            "Call_Transcript__c":             transcript_str,
+            "AI_Bot_Last_Modified_Date_Time__c": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+        }
 
-        # async with get_client() as client:
-        #     patch_res = await client.patch(update_url, json=sf_payload, headers=sf_headers)
-        #     if patch_res.status_code >= 400:
-        #         raise Exception(f"Salesforce PATCH error: {patch_res.text}")
+        async with get_client() as client:
+            patch_res = await client.patch(update_url, json=sf_payload, headers=sf_headers)
+            if patch_res.status_code >= 400:
+                logger.error(f"Salesforce PATCH error: {patch_res.text}")
+                raise Exception(f"Salesforce PATCH error: {patch_res.text}")
 
-        #     get_res = await client.get(update_url, headers=sf_headers)
-        #     lead_info = get_res.json()
+            get_res   = await client.get(update_url, headers=sf_headers)
+            lead_info = get_res.json()
 
         # ─────────────────────────────────────────────
         # GOOGLE SHEETS LOG
         # ─────────────────────────────────────────────
         await asyncio.to_thread(
             log_to_sheets,
-            "lead_info",
+            lead_info,
             lead_id,
             duration,
             conv_id,
