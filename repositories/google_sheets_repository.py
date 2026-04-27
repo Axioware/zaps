@@ -88,7 +88,7 @@ def get_sheets_client():
 
 
 
-def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_count=0, called_from="", sheet_url=None, worksheet_name=None):
+def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_count=0, called_from="", called_to="", sheet_url=None, worksheet_name=None):
     """
     Logs call info + AI extracted deal intelligence to Google Sheets
     
@@ -168,6 +168,7 @@ def log_to_sheets(lead_info, lead_id, duration, conv_id, analysis=None, call_cou
 
             # ── CALL INFO ─────────────────────────────
             "Called From": safe(called_from),
+            "Called To": safe(called_to),
             "Call Duration": f"{duration}s",
             "Call Disposition": disposition,
             "Call Count": str(call_count),

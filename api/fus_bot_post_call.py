@@ -47,10 +47,12 @@ async def handle_post_call(request: Request):
 
         conv_id = payload.get("conversation_id")
         called_from = ""
+        called_to = ""
         if conv_id:
             call_log = get_call_log(conv_id)
             if call_log:
                 called_from = call_log.get("from_number") or DEFAULT_PHONE
+                called_to = call_log.get("to_number", "")
         call_count = custom_data.get("call_count", 0)
 
 
@@ -109,6 +111,7 @@ async def handle_post_call(request: Request):
                 conv_id,
                 call_count=call_count,
                 called_from=called_from,
+                called_to=called_to,
                 analysis=analysis
             )
 

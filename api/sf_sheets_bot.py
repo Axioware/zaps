@@ -172,6 +172,8 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
 
     conv_id = call_res.json().get("conversation_id")
 
+    logger.info(f"Call initiated to phone number {digits} (lead_id: {lead_id})")
+
     if conv_id:
         create_call_log(
             conversation_id = conv_id,
@@ -254,16 +256,19 @@ async def sf_post_call(request: Request):
         call_interrupted   = evaluation_results.get("call_interupted", {}).get("result", "")
         frustrated_with_ai = evaluation_results.get("frustrated_with_ai", {}).get("result", "")
 
+        print("Evaluation results:", evaluation_results)
+        print("Call Interrupted:", call_interrupted)
+        print("Frustrated with AI:", frustrated_with_ai)
         
         # FULL DATA POINTS (matching sheet columns)
         
         analysis = {
-            "is_looking_to_sell":    get_field("is_looking_to_sell"),
+            "is_looking_to_sell":    get_field("Are they looking to sell?"),  
             "is_interested":         get_field("is_interested"),
-            "motivation":            get_field("motivation"),
-            "fair_cash_price":       get_field("fair_cash_price"),
-            "roadblocks":            get_field("roadblocks"),
-            "influencer":            get_field("influencer"),
+            "motivation":            get_field("Motivation"),                  
+            "fair_cash_price":       get_field("Fair Cash Price"),             
+            "roadblocks":            get_field("Roadblocks"),                  
+            "influencer":            get_field("Influencer"),                
             "timeline":              get_field("timeline"),
             "condition":             get_field("condition"),
             "next_steps":            get_field("next_steps"),
@@ -326,6 +331,13 @@ async def sf_post_call(request: Request):
         
         # GOOGLE SHEETS LOG
         
+        # Get called_to from call log
+        called_to = ""
+        if conv_id:
+            log = get_call_log(conv_id)
+            if log:
+                called_to = log.get("to_number", "")
+        
         await asyncio.to_thread(
             log_to_sheets,
             lead_info,
@@ -334,6 +346,7 @@ async def sf_post_call(request: Request):
             conv_id,
             call_count=call_count,
             called_from=called_from,
+            called_to=called_to,
             analysis=analysis,
             sheet_url=postcall_sheet_url,
             worksheet_name=postcall_worksheet_name,

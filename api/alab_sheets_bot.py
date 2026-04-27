@@ -224,7 +224,7 @@ async def post_call_update(request: Request):
             disposition = "Answered"
 
         # -------- UPDATE SHEET --------
-        # sheet.update(f"L{row_id}", [["Answered"]])
+        sheet.update(f"L{row_id}", [["Answered"]])
         sheet.update(f"L{row_id}", [[disposition]])
         sheet.update(f"M{row_id}", [[pacific_time]])
         sheet.update(f"O{row_id}", [[analysis.get("wrong_call", {}).get("value")]])
