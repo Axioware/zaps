@@ -6,13 +6,13 @@ from config.database import get_connection
 router = APIRouter()
 
 
-# ----------- INNER MODEL -----------
+#  INNER MODEL 
 class DaySchedule(BaseModel):
     start: str
     end: str
 
 
-# ----------- CREATE (Google Sheet Job) -----------
+#  CREATE (Google Sheet Job) 
 class SheetCreate(BaseModel):
     google_sheet_url: str
     worksheet_name: str
@@ -21,7 +21,7 @@ class SheetCreate(BaseModel):
     schedule: Dict[str, DaySchedule]
 
 
-# ----------- CREATE (Salesforce Job) -----------
+#  CREATE (Salesforce Job) 
 class SalesforceJobCreate(BaseModel):
     name: str                      # display name, stored as worksheet_name
     agent_id: str
@@ -32,7 +32,7 @@ class SalesforceJobCreate(BaseModel):
     postcall_worksheet_name: Optional[str] = None # Worksheet name for post-call logging
 
 
-# ----------- UPDATE -----------
+#  UPDATE 
 class SheetUpdate(BaseModel):
     google_sheet_url: Optional[str] = None
     worksheet_name: Optional[str] = None
@@ -48,9 +48,7 @@ class SheetStatusUpdate(BaseModel):
     status: bool
 
 
-# ═══════════════════════════════════════════════════════
 #  HELPERS
-# ═══════════════════════════════════════════════════════
 
 def _insert_schedules(conn, sheet_id: int, schedule: Dict[str, DaySchedule]):
     for day, times in schedule.items():
@@ -64,9 +62,7 @@ def _insert_schedules(conn, sheet_id: int, schedule: Dict[str, DaySchedule]):
         """, (sheet_id, day.lower(), start, end))
 
 
-# ═══════════════════════════════════════════════════════
 #  CREATE — Google Sheet Job
-# ═══════════════════════════════════════════════════════
 
 @router.post("/sheets")
 def create_sheet(data: SheetCreate):
@@ -88,9 +84,7 @@ def create_sheet(data: SheetCreate):
     return {"id": sheet_id, "message": "Sheet job added successfully"}
 
 
-# ═══════════════════════════════════════════════════════
 #  CREATE — Salesforce Job
-# ═══════════════════════════════════════════════════════
 
 @router.post("/sheets/salesforce")
 def create_salesforce_job(data: SalesforceJobCreate):
@@ -123,9 +117,8 @@ def create_salesforce_job(data: SalesforceJobCreate):
     return {"id": sheet_id, "message": "Salesforce job added successfully"}
 
 
-# ═══════════════════════════════════════════════════════
+
 #  GET — All Jobs (both types)
-# ═══════════════════════════════════════════════════════
 
 @router.get("/sheets")
 def get_sheets(
@@ -167,9 +160,8 @@ def get_sheets(
     return sheets
 
 
-# ═══════════════════════════════════════════════════════
 #  UPDATE
-# ═══════════════════════════════════════════════════════
+
 
 @router.put("/sheets/{sheet_id}")
 def update_sheet(sheet_id: int, data: SheetUpdate):
@@ -197,9 +189,9 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
     return {"message": "Sheet updated"}
 
 
-# ═══════════════════════════════════════════════════════
+# 
 #  TOGGLE STATUS
-# ═══════════════════════════════════════════════════════
+# 
 
 @router.patch("/sheets/{sheet_id}/status")
 def toggle_status(sheet_id: int, data: SheetStatusUpdate):
@@ -213,9 +205,9 @@ def toggle_status(sheet_id: int, data: SheetStatusUpdate):
     return {"message": "Status updated"}
 
 
-# ═══════════════════════════════════════════════════════
+
 #  DELETE
-# ═══════════════════════════════════════════════════════
+
 
 @router.delete("/sheets/{sheet_id}")
 def delete_sheet(sheet_id: int):

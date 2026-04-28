@@ -7,7 +7,7 @@ router = APIRouter()
 def get_call_analytics():
     with get_connection() as conn:
 
-        # ---------- SUMMARY ----------
+        #  SUMMARY 
         total_calls = conn.execute("SELECT COUNT(*) FROM call_logs").fetchone()[0]
 
         answered = conn.execute("""
@@ -34,7 +34,7 @@ def get_call_analytics():
             SELECT AVG(duration_secs) FROM call_logs
         """).fetchone()[0] or 0
 
-        # ---------- TREND (GROUP BY DATE) ----------
+        #  TREND (GROUP BY DATE) 
         trend_rows = conn.execute("""
             SELECT 
                 called_at::date as date,
@@ -59,7 +59,7 @@ def get_call_analytics():
             for row in trend_rows
         ]
 
-        # ---------- CATEGORY ----------
+        #  CATEGORY 
         category_data = [
             {"name": "Transferred", "value": transferred},
             {"name": "Wrong Number", "value": wrong_numbers},

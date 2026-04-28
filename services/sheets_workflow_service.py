@@ -8,7 +8,7 @@ logger = logging.getLogger("sheets_workflow")
 
 def get_leads(sheet, limit=None):
     try:
-        # -------- DYNAMIC LIMIT --------
+        #  DYNAMIC LIMIT 
         if limit is None:
             limit = get_row_limit()
 
@@ -19,19 +19,19 @@ def get_leads(sheet, limit=None):
             logger.info('Using dynamic limit from DB: 1 lead')
 
 
-        # -------- FETCH RECORDS --------
+        #  FETCH RECORDS
         records = sheet.get_all_records()
 
         leads = []
 
-        # -------- FILTER LEADS --------
+        #  FILTER LEADS
         for idx, r in enumerate(records, start=2):
             if not r.get("Call Disposition"):
                 r["_row"] = idx
                 leads.append(r)
 
 
-        # -------- APPLY LIMIT --------
+        #  APPLY LIMIT
         final_leads = leads[:limit]
 
         return final_leads

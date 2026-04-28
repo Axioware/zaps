@@ -8,7 +8,7 @@ from api.fus_bot_new_lead import Router as LeadRouter
 from api.fus_bot_call_end import Router as CallEndRouter
 from api.fus_bot_post_call import Router as PostCallRouter
 from api.alab_sheets_bot import Router as AlabSheetsRouter
-from api.sf_sheets_bot import Router as SFSheetsRouter          # ← NEW
+from api.sf_sheets_bot import Router as SFSheetsRouter
 from api.count import router as SheetsstatsRouter
 from api.call_analytics import router as CallAnalyticsRouter
 from core.security import verify_admin
@@ -52,13 +52,12 @@ class ConfigUpdate(BaseModel):
     num_rows: int
 
 
-# ── Routers ───────────────────────────────────────────────────
+#  Routers
 app.include_router(LeadRouter,       prefix="/api/leads",       tags=["Lead Processing"])
 app.include_router(CallEndRouter,    prefix="/api/callback",    tags=["Call Analysis"])
 app.include_router(PostCallRouter,   prefix="/api/postcall",    tags=["Post-Call Logging"])
 app.include_router(AlabSheetsRouter, prefix="/api/alab-sheets", tags=["ALab Sheets Bot"])
-app.include_router(SFSheetsRouter,   prefix="/api/sf-sheets",   tags=["SF Sheets Bot"])   # ← NEW
-# Webhook endpoint:  POST /api/sf-sheets/sf-post-call
+app.include_router(SFSheetsRouter,   prefix="/api/sf-sheets",   tags=["SF Sheets Bot"])
 app.include_router(SheetsRouter,     prefix="/api",             tags=["Sheets"])
 app.include_router(SheetsstatsRouter,prefix="/api",             tags=["Sheet Stats"])
 app.include_router(CallAnalyticsRouter, prefix="/api",          tags=["Analytics"])

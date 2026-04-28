@@ -57,7 +57,7 @@ def init_db():
     print('Initializing database...')
     with get_connection() as conn:
 
-        # ---------- CONFIG ----------
+        #  CONFIG 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS config (
                 id INTEGER PRIMARY KEY,
@@ -71,7 +71,7 @@ def init_db():
             ON CONFLICT (id) DO NOTHING
         """)
 
-        # ---------- SHEETS ----------
+        #  SHEETS 
         # type:  'google_sheet_job' (default) | 'salesforce_job'
         # query: NULL for sheet jobs, SOQL string for salesforce jobs
         conn.execute("""
@@ -128,7 +128,7 @@ def init_db():
         ON sheets(type)
         """)
 
-        # ---------- SCHEDULE TABLE ----------
+        #  SCHEDULE TABLE 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS sheet_schedules (
             id SERIAL PRIMARY KEY,
@@ -150,7 +150,7 @@ def init_db():
         ON sheet_schedules(day_of_week)
         """)
 
-        # ---------- CALL LOGS ----------
+        #  CALL LOGS 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS call_logs (
             id SERIAL PRIMARY KEY,

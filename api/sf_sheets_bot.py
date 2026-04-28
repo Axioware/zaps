@@ -1,12 +1,3 @@
-"""
-api/sf_sheets_bot.py
-
-Salesforce Job Bot  —  mirrors alab_sheets_bot.py but:
-  - reads leads from Salesforce using a stored SOQL query (sheets.query)
-  - post-call webhook updates the SF Lead record  +  logs to Google Sheets
-    (same behaviour as fus_bot_post_call.py)
-"""
-
 import asyncio
 import logging
 import re
@@ -38,9 +29,9 @@ Router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════
-#  HELPER  —  normalise a raw Salesforce phone string
-# ═══════════════════════════════════════════════════════════════
+
+#  HELPER normalise a raw Salesforce phone string
+
 def _clean_phone(raw: str) -> str:
     """Strip non-digits; return empty string if unusable."""
     if not raw or str(raw).strip().lower() in ("", "restricted", "none"):
@@ -48,9 +39,9 @@ def _clean_phone(raw: str) -> str:
     return re.sub(r"\D", "", raw)
 
 
-# ═══════════════════════════════════════════════════════════════
-#  CELERY ENTRY  —  called by process_sheet() for salesforce_job
-# ═══════════════════════════════════════════════════════════════
+
+#  CELERY ENTRY called by process_sheet() for salesforce_job
+
 async def trigger_sf_calls(sheet_id: int):
     """
     1. Load job config from DB (sheets row with type='salesforce_job').
@@ -61,7 +52,7 @@ async def trigger_sf_calls(sheet_id: int):
     logger.info(f"SF trigger started for sheet_id={sheet_id}")
 
     try:
-        # ── load job row ──────────────────────────────────────────
+        #  load job row
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM sheets WHERE id=%s AND type='salesforce_job'",
@@ -83,7 +74,7 @@ async def trigger_sf_calls(sheet_id: int):
             logger.error(f"sheet_id={sheet_id} has no agent_id configured")
             return
 
-        # ── fetch leads from Salesforce ───────────────────────────
+        #  fetch leads from Salesforce
         limit        = get_row_limit()
         access_token = await get_sf_access_token()
         sf_headers   = {"Authorization": f"Bearer {access_token}"}
@@ -142,7 +133,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
         logger.warning(f"Lead {lead_id}: no usable phone, skipping")
         return
 
-    # ── area mapping ──────────────────────────────────────────────
+    #  area mapping 
     area_code             = digits[1:4] if len(digits) >= 4 else digits[:3]
     phone_id, called_from  = get_area_mapping(area_code)
 
@@ -151,7 +142,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
         phone_id   = DEFAULT_PHONE
         called_from = DEFAULT_PHONE
 
-    # ── place ElevenLabs call ─────────────────────────────────────
+    #  place ElevenLabs call
     call_res = await safe_request(
         client,
         "POST",
@@ -183,7 +174,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
             sheet_id        = sheet_id,
         )
 
-    # ── stamp the SF lead so it won't be picked again immediately ─
+    #  stamp the SF lead so it won't be picked again immediately 
     pacific_now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000+0000")
     update_url  = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
 
@@ -197,7 +188,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
     logger.info(f"SF lead {lead_id} processed, conv_id={conv_id}")
 
 
-#  POST-CALL WEBHOOK  —  /sf-post-call
+#  POST-CALL WEBHOOK
 @Router.post("/sf-post-call")
 async def sf_post_call(request: Request):
     try:

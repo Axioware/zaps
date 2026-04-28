@@ -21,12 +21,12 @@ Router = APIRouter()
 
 logger = logging.getLogger(__name__)
     
-# ================= TRIGGER CALLS (CELERY ENTRY) =================
+#  TRIGGER CALLS (CELERY ENTRY) 
 async def trigger_calls(sheet_id: int):
     try:
         logger.info(f" Trigger started for sheet_id={sheet_id}")
 
-        # -------- LOAD SHEET FROM DB --------
+        #  LOAD SHEET FROM DB 
         with get_connection() as conn:
             sheet_data = conn.execute(
                 "SELECT * FROM sheets WHERE id=%s AND type='google_sheet_job'",
@@ -46,15 +46,15 @@ async def trigger_calls(sheet_id: int):
             logger.error(f"No agent_id found for sheet {sheet_id}")
             return {"error": "Agent ID not configured"}
 
-        # -------- CONNECT TO GOOGLE SHEET --------
+        #  CONNECT TO GOOGLE SHEET 
         client = get_client()
         sheet_key = extract_sheet_id(sheet_url)
         sheet = client.open_by_key(sheet_key).worksheet(worksheet_name)
 
-        # -------- GET LIMIT FROM DB --------
+        #  GET LIMIT FROM DB 
         limit = get_row_limit()
 
-        # -------- GET LEADS --------
+        #  GET LEADS 
         leads = get_leads(sheet, limit=limit)
 
         if not leads:
@@ -126,7 +126,7 @@ async def trigger_calls(sheet_id: int):
         logger.error(f" Fatal error: {e}", exc_info=True)
         return {"error": str(e)}
 
-# ================= POST CALL WEBHOOK =================
+#  POST CALL WEBHOOK 
 @Router.post("/post-call")
 async def post_call_update(request: Request):
     try:
@@ -146,7 +146,7 @@ async def post_call_update(request: Request):
 
         phone = str(called_number).replace("+", "")
 
-        # -------- FIND MATCHING SHEET --------
+        #  FIND MATCHING SHEET 
         client = get_client()
 
         with get_connection() as conn:
@@ -183,7 +183,7 @@ async def post_call_update(request: Request):
             logger.warning("No matching lead found in any sheet")
             return {"message": "No matching lead"}
 
-        # -------- TIME CONVERSION --------
+        #  TIME CONVERSION 
         timestamp = payload.get("event_timestamp")
         pacific_time = ""
 
@@ -193,29 +193,29 @@ async def post_call_update(request: Request):
             pacific_time = dt.replace(tzinfo=pytz.utc).astimezone(pacific)\
                 .strftime("%m/%d/%Y %H:%M:%S")
 
-        # -------- DATA --------
+        #  DATA 
         analysis = payload.get("analysis", {}).get("data_collection_results", {})
         metadata = payload.get("metadata", {})
 
-        # -------- SAFE DURATION --------
+        #  SAFE DURATION 
         duration_raw = metadata.get("call_duration_secs", 0)
         duration = float(duration_raw or 0)
 
-        # -------- TRANSFER DETECTION --------
+        #  TRANSFER DETECTION 
         transfer_used = str(
             metadata.get("features_usage", {})
             .get("transfer_to_number", {})
             .get("used", "")
         ).lower() == "true"
 
-        # -------- VOICEMAIL DETECTION (SAFE) --------
+        #  VOICEMAIL DETECTION (SAFE) 
         voicemail_flag = False
         if analysis:
             voicemail_flag = str(
                 analysis.get("voicemail_detected", {}).get("value", "")
             ).lower() == "true"
 
-        # -------- DISPOSITION LOGIC --------
+        #  DISPOSITION LOGIC 
         if duration <= 0:
             disposition = "Not Answered"
         elif voicemail_flag or transfer_used:
@@ -223,7 +223,7 @@ async def post_call_update(request: Request):
         else:
             disposition = "Answered"
 
-        # -------- UPDATE SHEET --------
+        #  UPDATE SHEET 
         # sheet.update(f"L{row_id}", [["Answered"]])
         sheet.update(f"L{row_id}", [[disposition]])
         sheet.update(f"M{row_id}", [[pacific_time]])
@@ -236,7 +236,7 @@ async def post_call_update(request: Request):
 
         logger.info(f" Post-call updated row {row_id}")
 
-        # -------- UPDATE CALL LOG --------
+        #  UPDATE CALL LOG 
         conv_id = payload.get("conversation_id")
         if conv_id:
             update_call_log(

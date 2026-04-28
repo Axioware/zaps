@@ -9,13 +9,13 @@ from config.database import get_connection
 from api.alab_sheets_bot import trigger_calls
 from api.sf_sheets_bot import trigger_sf_calls         # salesforce_job  ← NEW
 
-# ------------------- LOGGING -------------------
+# LOGGING 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scheduler")
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ------------------- CELERY INIT -------------------
+# CELERY INIT 
 celery = Celery(
     "scheduler",
     broker="redis://localhost:6379/0",
@@ -25,7 +25,7 @@ celery = Celery(
 celery.conf.timezone = "America/Los_Angeles"
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
-# ------------------- MAIN SCHEDULER -------------------
+# MAIN SCHEDULER 
 @celery.task(bind=True, max_retries=3)
 def run_scheduler(self):
     now_local = datetime.now(LOCAL_TZ)
@@ -77,7 +77,7 @@ def run_scheduler(self):
                         )
                         continue
 
-                    # ── last-run guard (2-min cooldown) ──
+                    #  last-run guard (2-min cooldown) 
                     last_run_raw = sheet["last_run"]
                     last_run_dt  = None
 
@@ -101,14 +101,14 @@ def run_scheduler(self):
                             )
                             continue
 
-                    # ── stamp last_run BEFORE dispatching to block duplicate fires ──
+                    #  stamp last_run BEFORE dispatching to block duplicate fires 
                     conn.execute(
                         "UPDATE sheets SET last_run=%s WHERE id=%s",
                         (datetime.now(timezone.utc).isoformat(), sheet_id)
                     )
                     conn.commit()
 
-                    # ── dispatch to the right worker ──
+                    #  dispatch to the right worker 
                     process_sheet.delay(sheet_id, job_type)
                     logger.info(f"Dispatched sheet {sheet_id} (type={job_type})")
 
@@ -116,7 +116,7 @@ def run_scheduler(self):
         logger.error(f"Scheduler failure: {e}", exc_info=True)
         raise self.retry(countdown=10)
 
-# ------------------- WORKER TASK -------------------
+# WORKER TASK 
 @celery.task(bind=True, max_retries=3)
 def process_sheet(self, sheet_id: int, job_type: str = "google_sheet_job"):
     """
@@ -146,7 +146,7 @@ def process_sheet(self, sheet_id: int, job_type: str = "google_sheet_job"):
         raise self.retry(countdown=20)
 
 
-# ------------------- BEAT SCHEDULE -------------------
+# BEAT SCHEDULE 
 celery.conf.beat_schedule = {
     "run-every-2-minutes": {
         "task": "core.celery_app.run_scheduler",
