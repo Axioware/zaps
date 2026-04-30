@@ -85,6 +85,7 @@ def init_db():
             last_status TEXT,
             type TEXT NOT NULL DEFAULT 'google_sheet_job',
             query TEXT,
+            query2 TEXT,
             postcall_sheet_url TEXT,
             postcall_worksheet_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -116,6 +117,11 @@ def init_db():
         conn.execute("""
             ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
             postcall_worksheet_name TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            query2 TEXT
         """)
 
         conn.execute("""

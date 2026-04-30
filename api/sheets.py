@@ -26,6 +26,7 @@ class SalesforceJobCreate(BaseModel):
     name: str                      # display name, stored as worksheet_name
     agent_id: str
     query: str                     # SOQL query to fetch leads
+    query2: Optional[str] = None                  # Fallback SOQL query if primary returns no results
     status: bool = True
     schedule: Dict[str, DaySchedule]
     postcall_sheet_url: Optional[str] = None      # Google Sheet URL for post-call logging
@@ -39,6 +40,7 @@ class SheetUpdate(BaseModel):
     agent_id: Optional[str] = None
     status: Optional[bool] = None
     query: Optional[str] = None
+    query2: Optional[str] = None
     schedule: Optional[Dict[str, DaySchedule]] = None
     postcall_sheet_url: Optional[str] = None
     postcall_worksheet_name: Optional[str] = None
@@ -88,25 +90,17 @@ def create_sheet(data: SheetCreate):
 
 @router.post("/sheets/salesforce")
 def create_salesforce_job(data: SalesforceJobCreate):
-    """
-    Frontend form fields:
-      - name       → stored as worksheet_name (display only)
-      - agent_id   → ElevenLabs agent ID
-      - query      → SOQL query to fetch leads
-      - schedule   → day → { start, end }
-      - postcall_sheet_url      → optional Google Sheet URL for post-call logging
-      - postcall_worksheet_name → optional worksheet name for post-call logging
-    """
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, postcall_sheet_url, postcall_worksheet_name)
-            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, query2, postcall_sheet_url, postcall_worksheet_name)
+            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s, %s)
             RETURNING id
         """, (
             data.name,
             data.agent_id,
             data.status,
             data.query,
+            data.query2,
             data.postcall_sheet_url,
             data.postcall_worksheet_name,
         ))
@@ -169,9 +163,15 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
         fields = []
         values = []
 
-        for key, value in data.dict(exclude_none=True, exclude={"schedule"}).items():
-            fields.append(f"{key}=%s")
-            values.append(value)
+        # Get all fields including None values to properly handle clearing fields
+        update_data = data.dict(exclude={"schedule"})
+        for key, value in update_data.items():
+            if value is not None:
+                fields.append(f"{key}=%s")
+                values.append(value)
+            else:
+                # Explicitly set None values to NULL in database
+                fields.append(f"{key}=NULL")
 
         if fields:
             values.append(sheet_id)

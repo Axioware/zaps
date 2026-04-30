@@ -56,6 +56,7 @@ async def trigger_sf_calls(sheet_id: int):
 
         row        = dict(row)
         soql_query = row.get("query")
+        soql_query2 = row.get("query2")
         agent_id   = row.get("agent_id")
 
         if not soql_query:
@@ -81,6 +82,20 @@ async def trigger_sf_calls(sheet_id: int):
                 headers=sf_headers,
             )
             leads = res.json().get("records", [])
+
+        if not leads and soql_query2:
+            logger.info(f"No leads returned for sheet_id={sheet_id}. Checking fallback query (query2)...")
+            soql_with_limit2 = soql_query2
+            if "limit" not in soql_query2.lower():
+                soql_with_limit2 = soql_query2.rstrip().rstrip(";") + f" LIMIT {limit}"
+
+            async with get_client() as client:
+                res = await safe_request(
+                    client, "GET", query_url,
+                    params={"q": soql_with_limit2},
+                    headers=sf_headers,
+                )
+                leads = res.json().get("records", [])
 
         if not leads:
             logger.info(f"No leads returned for sheet_id={sheet_id}")
