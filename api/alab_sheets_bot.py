@@ -51,8 +51,10 @@ async def trigger_calls(sheet_id: int):
         sheet_key = extract_sheet_id(sheet_url)
         sheet = client.open_by_key(sheet_key).worksheet(worksheet_name)
 
-        #  GET LIMIT FROM DB 
-        limit = get_row_limit()
+        #  GET LIMIT FROM SHEET JOB OR FALLBACK TO GLOBAL CONFIG
+        limit = sheet_data.get("batch_size")
+        if not limit:
+            limit = get_row_limit()
 
         #  GET LEADS 
         leads = get_leads(sheet, limit=limit)

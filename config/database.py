@@ -88,6 +88,7 @@ def init_db():
             query2 TEXT,
             postcall_sheet_url TEXT,
             postcall_worksheet_name TEXT,
+            batch_size INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -106,6 +107,11 @@ def init_db():
         conn.execute("""
             ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
             query TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            batch_size INTEGER
         """)
 
         # For salesforce_job: optional Google Sheet for post-call logging

@@ -66,7 +66,8 @@ async def trigger_sf_calls(sheet_id: int):
             logger.error(f"sheet_id={sheet_id} has no agent_id configured")
             return
 
-        limit        = get_row_limit()
+        batch_size   = row.get("batch_size")
+        limit        = batch_size if batch_size else get_row_limit()
         access_token = await get_sf_access_token()
         sf_headers   = {"Authorization": f"Bearer {access_token}"}
         query_url    = f"{SF_INSTANCE_URL}/services/data/v57.0/query"

@@ -18,6 +18,7 @@ class SheetCreate(BaseModel):
     worksheet_name: str
     agent_id: str
     status: bool = True
+    batch_size: Optional[int] = None
     schedule: Dict[str, DaySchedule]
 
 
@@ -28,6 +29,7 @@ class SalesforceJobCreate(BaseModel):
     query: str                     # SOQL query to fetch leads
     query2: Optional[str] = None                  # Fallback SOQL query if primary returns no results
     status: bool = True
+    batch_size: Optional[int] = None
     schedule: Dict[str, DaySchedule]
     postcall_sheet_url: Optional[str] = None      # Google Sheet URL for post-call logging
     postcall_worksheet_name: Optional[str] = None # Worksheet name for post-call logging
@@ -39,6 +41,7 @@ class SheetUpdate(BaseModel):
     worksheet_name: Optional[str] = None
     agent_id: Optional[str] = None
     status: Optional[bool] = None
+    batch_size: Optional[int] = None
     query: Optional[str] = None
     query2: Optional[str] = None
     schedule: Optional[Dict[str, DaySchedule]] = None
@@ -70,14 +73,15 @@ def _insert_schedules(conn, sheet_id: int, schedule: Dict[str, DaySchedule]):
 def create_sheet(data: SheetCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query)
-            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, batch_size)
+            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL, %s)
             RETURNING id
         """, (
             data.google_sheet_url,
             data.worksheet_name,
             data.agent_id,
             data.status,
+            data.batch_size,
         ))
         sheet_id = cursor.fetchone()[0]
         _insert_schedules(conn, sheet_id, data.schedule)
@@ -92,8 +96,8 @@ def create_sheet(data: SheetCreate):
 def create_salesforce_job(data: SalesforceJobCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, query2, postcall_sheet_url, postcall_worksheet_name)
-            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s, %s)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, query2, postcall_sheet_url, postcall_worksheet_name, batch_size)
+            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             data.name,
@@ -103,6 +107,7 @@ def create_salesforce_job(data: SalesforceJobCreate):
             data.query2,
             data.postcall_sheet_url,
             data.postcall_worksheet_name,
+            data.batch_size,
         ))
         sheet_id = cursor.fetchone()[0]
         _insert_schedules(conn, sheet_id, data.schedule)
@@ -163,15 +168,11 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
         fields = []
         values = []
 
-        # Get all fields including None values to properly handle clearing fields
-        update_data = data.dict(exclude={"schedule"})
+        update_data = data.dict(exclude={"schedule"}, exclude_unset=True)
         for key, value in update_data.items():
             if value is not None:
                 fields.append(f"{key}=%s")
                 values.append(value)
-            else:
-                # Explicitly set None values to NULL in database
-                fields.append(f"{key}=NULL")
 
         if fields:
             values.append(sheet_id)
