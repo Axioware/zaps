@@ -168,6 +168,29 @@ def init_db():
         ON sheet_schedules(day_of_week)
         """)
 
+        #  PROMPTS
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS prompts (
+            id SERIAL PRIMARY KEY,
+            prompt_text TEXT NOT NULL,
+            active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        # Insert default prompt if table is empty
+        conn.execute("""
+        INSERT INTO prompts (prompt_text, active) 
+        SELECT %s, TRUE 
+        WHERE NOT EXISTS (SELECT 1 FROM prompts)
+        """, ("insert prompt here",))
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prompts_active
+        ON prompts(active)
+        """)
+
         #  CALL LOGS 
         conn.execute("""
         CREATE TABLE IF NOT EXISTS call_logs (
