@@ -89,6 +89,7 @@ def init_db():
             postcall_sheet_url TEXT,
             postcall_worksheet_name TEXT,
             batch_size INTEGER,
+            retries_on_voicemail INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -112,6 +113,11 @@ def init_db():
         conn.execute("""
             ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
             batch_size INTEGER
+        """)
+
+        conn.execute("""
+            ALTER TABLE sheets ADD COLUMN IF NOT EXISTS
+            retries_on_voicemail INTEGER DEFAULT 0
         """)
 
         # For salesforce_job: optional Google Sheet for post-call logging
@@ -180,8 +186,14 @@ def init_db():
             callback_time TEXT,
             transfer_used TEXT,
             transcript TEXT,
+            voicemail_retry_count INTEGER DEFAULT 0,
             updated_at TIMESTAMP
         )
+        """)
+
+        conn.execute("""
+            ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS
+            voicemail_retry_count INTEGER DEFAULT 0
         """)
 
         conn.execute("""
@@ -306,3 +318,37 @@ def get_call_log(conversation_id: str):
     except Exception as e:
         logger.error(f"Error fetching call log: {e}")
         return None
+
+
+def increment_voicemail_retry_count(conversation_id: str):
+    """Increment the voicemail retry count for a call log."""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE call_logs SET voicemail_retry_count = voicemail_retry_count + 1 WHERE conversation_id = %s",
+                (conversation_id,)
+            )
+            conn.commit()
+            logger.info(f"Voicemail retry count incremented for {conversation_id}")
+    except Exception as e:
+        logger.error(f"Error incrementing voicemail retry count: {e}")
+        raise
+
+
+def can_retry_on_voicemail(conversation_id: str, retries_on_voicemail: int) -> bool:
+    """Check if a call can be retried based on voicemail retry limits."""
+    if retries_on_voicemail <= 0:
+        return False
+    
+    try:
+        log = get_call_log(conversation_id)
+        if not log:
+            return False
+        
+        retry_count = log.get("voicemail_retry_count", 0) or 0
+        can_retry = retry_count < retries_on_voicemail
+        logger.info(f"Call {conversation_id}: retry_count={retry_count}, limit={retries_on_voicemail}, can_retry={can_retry}")
+        return can_retry
+    except Exception as e:
+        logger.error(f"Error checking retry eligibility: {e}")
+        return False

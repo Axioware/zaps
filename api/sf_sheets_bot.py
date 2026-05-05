@@ -14,6 +14,8 @@ from config.database import (
     get_row_limit,
     update_call_log,
     get_call_log,
+    can_retry_on_voicemail,
+    increment_voicemail_retry_count,
 )
 from repositories.google_sheets_repository import log_to_sheets, update_sheet_row
 from services.area_service import get_area_mapping
@@ -29,7 +31,7 @@ Router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-#  HELPER: normalise a raw Salesforce phone string 
+# ── HELPER: normalise a raw Salesforce phone string ───────────────────────────
 
 def _clean_phone(raw: str) -> str:
     """Strip non-digits; return empty string if unusable."""
@@ -38,7 +40,7 @@ def _clean_phone(raw: str) -> str:
     return re.sub(r"\D", "", raw)
 
 
-#  CELERY ENTRY: called by process_sheet() for salesforce_job 
+# ── CELERY ENTRY: called by process_sheet() for salesforce_job ────────────────
 
 async def trigger_sf_calls(sheet_id: int):
     logger.info(f"SF trigger started for sheet_id={sheet_id}")
@@ -54,10 +56,10 @@ async def trigger_sf_calls(sheet_id: int):
             logger.error(f"sheet_id={sheet_id} not found or not a salesforce_job")
             return
 
-        row        = dict(row)
-        soql_query = row.get("query")
+        row         = dict(row)
+        soql_query  = row.get("query")
         soql_query2 = row.get("query2")
-        agent_id   = row.get("agent_id")
+        agent_id    = row.get("agent_id")
 
         if not soql_query:
             logger.error(f"sheet_id={sheet_id} has no SOQL query configured")
@@ -85,7 +87,7 @@ async def trigger_sf_calls(sheet_id: int):
             leads = res.json().get("records", [])
 
         if not leads and soql_query2:
-            logger.info(f"No leads returned for sheet_id={sheet_id}. Checking fallback query (query2)...")
+            logger.info(f"No leads for sheet_id={sheet_id}. Checking fallback query (query2)...")
             soql_with_limit2 = soql_query2
             if "limit" not in soql_query2.lower():
                 soql_with_limit2 = soql_query2.rstrip().rstrip(";") + f" LIMIT {limit}"
@@ -127,24 +129,13 @@ async def trigger_sf_calls(sheet_id: int):
         return {"error": str(e)}
 
 
-async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_url):
-    """Place one call, insert a placeholder sheet row, and stamp the SF lead."""
-    lead_id   = lead.get("Id")
-    raw_phone = lead.get("Phone", "")
-    digits    = _clean_phone(raw_phone)
+# ── PLACE ONE OUTBOUND CALL ───────────────────────────────────────────────────
 
-    if not digits:
-        logger.warning(f"Lead {lead_id}: no usable phone, skipping")
-        return
-
-    area_code            = digits[1:4] if len(digits) >= 4 else digits[:3]
-    phone_id, called_from = get_area_mapping(area_code)
-
-    if not phone_id:
-        logger.info(f"Lead {lead_id}: no area mapping for {area_code}, using default")
-        phone_id    = DEFAULT_PHONE
-        called_from = DEFAULT_PHONE
-
+async def _place_outbound_call(client, agent_id, phone_id, digits, lead_id, address):
+    """
+    Fires one outbound call via ElevenLabs and returns conv_id.
+    Does NOT create a call_log — caller is responsible for that.
+    """
     call_res = await safe_request(
         client,
         "POST",
@@ -156,15 +147,37 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
             "conversation_initiation_client_data": {
                 "dynamic_variables": {
                     "lead_id": lead_id,
-                    "address": lead.get("Street") or lead.get("Address") or "See CRM",
+                    "address": address,
                 }
             },
         },
         headers={"xi-api-key": ELEVEN_LABS_KEY},
     )
-
     conv_id = call_res.json().get("conversation_id")
-    logger.info(f"Call initiated to {digits} (lead_id={lead_id}, conv_id={conv_id})")
+    logger.info(f"Outbound call placed → digits={digits} lead_id={lead_id} conv_id={conv_id}")
+    return conv_id
+
+
+async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_url):
+    """Place one call, insert a placeholder sheet row, and stamp the SF lead."""
+    lead_id   = lead.get("Id")
+    raw_phone = lead.get("Phone", "")
+    digits    = _clean_phone(raw_phone)
+
+    if not digits:
+        logger.warning(f"Lead {lead_id}: no usable phone, skipping")
+        return
+
+    area_code             = digits[1:4] if len(digits) >= 4 else digits[:3]
+    phone_id, called_from = get_area_mapping(area_code)
+
+    if not phone_id:
+        logger.info(f"Lead {lead_id}: no area mapping for {area_code}, using default")
+        phone_id    = DEFAULT_PHONE
+        called_from = DEFAULT_PHONE
+
+    address = lead.get("Street") or lead.get("Address") or "See CRM"
+    conv_id = await _place_outbound_call(client, agent_id, phone_id, digits, lead_id, address)
 
     if conv_id:
         create_call_log(
@@ -175,9 +188,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
             sheet_id        = sheet_id,
         )
 
-    #  INSERT PLACEHOLDER ROW IN GOOGLE SHEET AT TRIGGER TIME 
-    # All CRM columns are populated now; analysis columns stay blank.
-    # Disposition = "Unanswered" — post-call webhook will update the full row.
+    # ── INSERT PLACEHOLDER ROW IN GOOGLE SHEET AT TRIGGER TIME ───────────────
     try:
         with get_connection() as conn:
             job_row = conn.execute(
@@ -190,7 +201,6 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
             worksheet_name = job_row.get("postcall_worksheet_name")
 
             if sheet_url and worksheet_name:
-                # Fetch full lead details from SF for CRM columns
                 lead_url = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
                 async with get_client() as c:
                     lead_res  = await c.get(lead_url, headers=sf_headers)
@@ -200,12 +210,12 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
                     log_to_sheets,
                     lead_info,
                     lead_id,
-                    0,              # duration=0 → disposition="Not Answered" placeholder
+                    0,
                     conv_id,
                     call_count     = 1,
                     called_from    = called_from,
                     called_to      = digits,
-                    analysis       = None,  # no analysis yet at trigger time
+                    analysis       = None,
                     sheet_url      = sheet_url,
                     worksheet_name = worksheet_name,
                 )
@@ -213,7 +223,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
     except Exception as e:
         logger.error(f"Trigger: error adding sheet row for lead {lead_id}: {e}", exc_info=True)
 
-    #  STAMP SF LEAD 
+    # ── STAMP SF LEAD ─────────────────────────────────────────────────────────
     pacific_now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000+0000")
     update_url  = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
 
@@ -227,10 +237,12 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
     logger.info(f"SF lead {lead_id} stamped, conv_id={conv_id}")
 
 
-#  POST-CALL WEBHOOK 
+# ── POST-CALL WEBHOOK ─────────────────────────────────────────────────────────
 
 @Router.post("/sf-post-call")
 async def sf_post_call(request: Request):
+    call_disposition = "Unknown"
+
     try:
         data = await request.json()
         logger.info("SF post-call webhook received")
@@ -243,6 +255,7 @@ async def sf_post_call(request: Request):
         duration    = int(metadata.get("call_duration_secs", 0))
         call_status = str(payload.get("status", "unknown"))
 
+        # ── TRANSCRIPT ────────────────────────────────────────────────────────
         transcript_lines = []
         for msg in payload.get("transcript", []):
             role = msg.get("role", "").capitalize()
@@ -251,6 +264,7 @@ async def sf_post_call(request: Request):
                 transcript_lines.append(f"{role}: {text}")
         transcript_str = "\n".join(transcript_lines) or "No transcript"
 
+        # ── IDs ───────────────────────────────────────────────────────────────
         custom_data = (
             payload.get("conversation_initiation_client_data", {})
                    .get("dynamic_variables", {})
@@ -263,6 +277,149 @@ async def sf_post_call(request: Request):
             logger.error("SF post-call: missing lead_id")
             return {"error": "Missing lead_id"}
 
+        # ── VOICEMAIL DETECTION ───────────────────────────────────────────────
+        termination_reason = metadata.get("termination_reason", "")
+        voicemail_detected = "voicemail" in termination_reason.lower()
+
+        if not voicemail_detected:
+            voicemail_detected = (
+                metadata.get("features_usage", {})
+                        .get("voicemail_detection", {})
+                        .get("used", False)
+            )
+
+        logger.info(
+            f"conv_id={conv_id} | duration={duration} | "
+            f"termination_reason='{termination_reason}' | voicemail_detected={voicemail_detected}"
+        )
+
+        # ── RESOLVE sheet_id, called_from ─────────────────────────────────────
+        called_from             = DEFAULT_PHONE
+        sheet_id                = None
+        postcall_sheet_url      = None
+        postcall_worksheet_name = None
+        agent_id                = None
+        retries_on_voicemail    = 0
+
+        if conv_id:
+            log = get_call_log(conv_id)
+            if log:
+                called_from = log.get("from_number") or DEFAULT_PHONE
+                sheet_id    = log.get("sheet_id")
+
+        if sheet_id:
+            with get_connection() as conn:
+                job_row = conn.execute(
+                    """SELECT postcall_sheet_url, postcall_worksheet_name,
+                              agent_id, retries_on_voicemail
+                       FROM sheets WHERE id=%s""",
+                    (sheet_id,),
+                ).fetchone()
+                if job_row:
+                    postcall_sheet_url      = job_row.get("postcall_sheet_url")
+                    postcall_worksheet_name = job_row.get("postcall_worksheet_name")
+                    agent_id                = job_row.get("agent_id")
+                    retries_on_voicemail    = job_row.get("retries_on_voicemail") or 0
+
+        # ── DETERMINE CALL DISPOSITION + RETRY LOGIC ──────────────────────────
+        if duration <= 0:
+            call_disposition = "Not Answered"
+
+        elif voicemail_detected:
+            # Check how many retries have already been used for this conv
+            if can_retry_on_voicemail(conv_id, retries_on_voicemail):
+                # ✅ Increment BEFORE placing the retry so the new call
+                #    starts with an accurate count already in the DB.
+                increment_voicemail_retry_count(conv_id)
+                retry_count = (get_call_log(conv_id) or {}).get("voicemail_retry_count", 1)
+                logger.info(
+                    f"Voicemail retry {retry_count}/{retries_on_voicemail} "
+                    f"→ placing retry call | lead_id={lead_id} conv_id={conv_id}"
+                )
+
+                # ── PLACE THE RETRY CALL ──────────────────────────────────────
+                try:
+                    # Resolve phone details from the original call log
+                    original_log = get_call_log(conv_id)
+                    digits       = original_log.get("to_number", "") if original_log else ""
+                    area_code    = digits[1:4] if len(digits) >= 4 else digits[:3]
+                    phone_id, _  = get_area_mapping(area_code)
+
+                    if not phone_id:
+                        phone_id = DEFAULT_PHONE
+
+                    if not agent_id:
+                        logger.error(f"Cannot retry: agent_id missing for sheet_id={sheet_id}")
+                        call_disposition = "Voicemail"
+                    elif not digits:
+                        logger.error(f"Cannot retry: to_number missing for conv_id={conv_id}")
+                        call_disposition = "Voicemail"
+                    else:
+                        access_token_retry = await get_sf_access_token()
+                        sf_headers_retry   = {"Authorization": f"Bearer {access_token_retry}"}
+                        lead_url           = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
+
+                        async with get_client() as retry_client:
+                            # Place the new outbound call
+                            new_conv_id = await _place_outbound_call(
+                                retry_client, agent_id, phone_id,
+                                digits, lead_id, "See CRM",
+                            )
+
+                            if new_conv_id:
+                                # Create a fresh call_log for the retry call
+                                # linked to the SAME sheet_id so the webhook
+                                # can find all the job config again.
+                                create_call_log(
+                                    conversation_id = new_conv_id,
+                                    to_number       = digits,
+                                    from_number     = called_from,
+                                    lead_id         = lead_id,
+                                    sheet_id        = sheet_id,
+                                )
+                                # ✅ Copy the retry count so the new conv_id
+                                #    inherits the same retry state and the limit
+                                #    is respected across the chain.
+                                with get_connection() as conn:
+                                    conn.execute(
+                                        """UPDATE call_logs
+                                           SET voicemail_retry_count = %s
+                                           WHERE conversation_id = %s""",
+                                        (retry_count, new_conv_id),
+                                    )
+                                    conn.commit()
+
+                                logger.info(
+                                    f"Retry call placed | new_conv_id={new_conv_id} "
+                                    f"lead_id={lead_id} attempt={retry_count}/{retries_on_voicemail}"
+                                )
+
+                            # Stamp SF so the lead isn't picked up again immediately
+                            pacific_now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000+0000")
+                            await retry_client.patch(
+                                lead_url,
+                                json={"AI_Bot_Last_Modified_Date_Time__c": pacific_now},
+                                headers=sf_headers_retry,
+                            )
+
+                        call_disposition = "Voicemail"   # current call was voicemail
+
+                except Exception as retry_err:
+                    logger.error(f"Retry call failed: {retry_err}", exc_info=True)
+                    call_disposition = "Voicemail"
+
+            else:
+                # Retry limit reached — mark final and stop
+                call_disposition = "Voicemail"
+                logger.info(
+                    f"Voicemail retry limit reached ({retries_on_voicemail}) "
+                    f"→ final Voicemail | conv_id={conv_id}"
+                )
+
+        else:
+            call_disposition = "Answered"
+
+        # ── ANALYSIS FIELDS ───────────────────────────────────────────────────
         def get_field(key):
             return (
                 payload.get("analysis", {})
@@ -293,30 +450,11 @@ async def sf_post_call(request: Request):
             "checkback_time":        get_field("checkback_time"),
             "call_interrupted":      call_interrupted,
             "frustrated_with_ai":    frustrated_with_ai,
+            "voicemail_detected":    voicemail_detected,
+            "call_disposition":      call_disposition,
         }
 
-        called_from             = DEFAULT_PHONE
-        sheet_id                = None
-        postcall_sheet_url      = None
-        postcall_worksheet_name = None
-
-        if conv_id:
-            log = get_call_log(conv_id)
-            if log:
-                called_from = log.get("from_number") or DEFAULT_PHONE
-                sheet_id    = log.get("sheet_id")
-
-        if sheet_id:
-            with get_connection() as conn:
-                job_row = conn.execute(
-                    "SELECT postcall_sheet_url, postcall_worksheet_name FROM sheets WHERE id=%s",
-                    (sheet_id,),
-                ).fetchone()
-                if job_row:
-                    postcall_sheet_url      = job_row.get("postcall_sheet_url")
-                    postcall_worksheet_name = job_row.get("postcall_worksheet_name")
-
-        #  UPDATE SALESFORCE 
+        # ── UPDATE SALESFORCE ─────────────────────────────────────────────────
         access_token = await get_sf_access_token()
         sf_headers   = {"Authorization": f"Bearer {access_token}"}
         update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
@@ -337,17 +475,17 @@ async def sf_post_call(request: Request):
             get_res   = await client.get(update_url, headers=sf_headers)
             lead_info = get_res.json()
 
-        #  UPDATE CALL LOG 
+        # ── UPDATE CALL LOG ───────────────────────────────────────────────────
         if conv_id:
             update_call_log(
                 conversation_id  = conv_id,
-                call_disposition = "Answered" if duration > 0 else "Not Answered",
+                call_disposition = call_disposition,
                 duration_secs    = duration,
                 call_status      = call_status,
                 transcript       = transcript_str,
             )
 
-        #  UPDATE EXISTING GOOGLE SHEET ROW 
+        # ── UPDATE GOOGLE SHEET ROW ───────────────────────────────────────────
         called_to = ""
         if conv_id:
             log = get_call_log(conv_id)
@@ -357,16 +495,18 @@ async def sf_post_call(request: Request):
         if postcall_sheet_url and postcall_worksheet_name and called_to:
             await asyncio.to_thread(
                 update_sheet_row,
-                lead_info      = lead_info,
-                lead_id        = lead_id,
-                duration       = duration,
-                conv_id        = conv_id,
-                call_count     = call_count,
-                called_from    = called_from,
-                called_to      = called_to,
-                analysis       = analysis,
-                sheet_url      = postcall_sheet_url,
-                worksheet_name = postcall_worksheet_name,
+                lead_info          = lead_info,
+                lead_id            = lead_id,
+                duration           = duration,
+                conv_id            = conv_id,
+                call_count         = call_count,
+                called_from        = called_from,
+                called_to          = called_to,
+                analysis           = analysis,
+                sheet_url          = postcall_sheet_url,
+                worksheet_name     = postcall_worksheet_name,
+                call_disposition   = call_disposition,
+                voicemail_detected = voicemail_detected,
             )
         else:
             missing = [k for k, v in {
@@ -376,8 +516,8 @@ async def sf_post_call(request: Request):
             }.items() if not v]
             logger.warning(f"Post-call: skipping sheet update, missing: {missing}")
 
-        logger.info(f"SF post-call completed | lead_id={lead_id}")
-        return {"status": "success", "duration": duration}
+        logger.info(f"SF post-call completed | lead_id={lead_id} | disposition={call_disposition}")
+        return {"status": "success", "duration": duration, "disposition": call_disposition}
 
     except Exception as e:
         logger.error(f"SF post-call error: {e}", exc_info=True)

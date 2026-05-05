@@ -19,6 +19,7 @@ class SheetCreate(BaseModel):
     agent_id: str
     status: bool = True
     batch_size: Optional[int] = None
+    retries_on_voicemail: Optional[int] = 0
     schedule: Dict[str, DaySchedule]
 
 
@@ -30,6 +31,7 @@ class SalesforceJobCreate(BaseModel):
     query2: Optional[str] = None                  # Fallback SOQL query if primary returns no results
     status: bool = True
     batch_size: Optional[int] = None
+    retries_on_voicemail: Optional[int] = 0
     schedule: Dict[str, DaySchedule]
     postcall_sheet_url: Optional[str] = None      # Google Sheet URL for post-call logging
     postcall_worksheet_name: Optional[str] = None # Worksheet name for post-call logging
@@ -42,6 +44,7 @@ class SheetUpdate(BaseModel):
     agent_id: Optional[str] = None
     status: Optional[bool] = None
     batch_size: Optional[int] = None
+    retries_on_voicemail: Optional[int] = None
     query: Optional[str] = None
     query2: Optional[str] = None
     schedule: Optional[Dict[str, DaySchedule]] = None
@@ -73,8 +76,8 @@ def _insert_schedules(conn, sheet_id: int, schedule: Dict[str, DaySchedule]):
 def create_sheet(data: SheetCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, batch_size)
-            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL, %s)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, batch_size, retries_on_voicemail)
+            VALUES (%s, %s, %s, %s, 'google_sheet_job', NULL, %s, %s)
             RETURNING id
         """, (
             data.google_sheet_url,
@@ -82,6 +85,7 @@ def create_sheet(data: SheetCreate):
             data.agent_id,
             data.status,
             data.batch_size,
+            data.retries_on_voicemail,
         ))
         sheet_id = cursor.fetchone()[0]
         _insert_schedules(conn, sheet_id, data.schedule)
@@ -96,8 +100,8 @@ def create_sheet(data: SheetCreate):
 def create_salesforce_job(data: SalesforceJobCreate):
     with get_connection() as conn:
         cursor = conn.execute("""
-            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, query2, postcall_sheet_url, postcall_worksheet_name, batch_size)
-            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s, %s, %s)
+            INSERT INTO sheets (google_sheet_url, worksheet_name, agent_id, status, type, query, query2, postcall_sheet_url, postcall_worksheet_name, batch_size, retries_on_voicemail)
+            VALUES (NULL, %s, %s, %s, 'salesforce_job', %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             data.name,
@@ -108,6 +112,7 @@ def create_salesforce_job(data: SalesforceJobCreate):
             data.postcall_sheet_url,
             data.postcall_worksheet_name,
             data.batch_size,
+            data.retries_on_voicemail,
         ))
         sheet_id = cursor.fetchone()[0]
         _insert_schedules(conn, sheet_id, data.schedule)

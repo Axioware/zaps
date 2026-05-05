@@ -24,9 +24,11 @@ def get_leads(sheet, limit=None):
 
         leads = []
 
-        #  FILTER LEADS
+        #  FILTER LEADS - Include both new leads and those pending retry
         for idx, r in enumerate(records, start=2):
-            if not r.get("Call Disposition"):
+            disposition = r.get("Call Disposition", "").strip()
+            #  Process leads with no disposition or marked as Pending Retry
+            if not disposition or disposition == "Pending Retry":
                 r["_row"] = idx
                 leads.append(r)
 
