@@ -469,10 +469,11 @@ async def _send_email(analysis: dict, record: dict) -> None:
         msg["Subject"] = _EMAIL_SUBJECT
         msg["From"] = _GMAIL_SENDER_EMAIL
         msg["To"] = ", ".join(_EMAIL_RECIPIENTS)
-
         msg.attach(MIMEText(body_text, "plain"))
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()
+            server.starttls()
             server.login(_GMAIL_SENDER_EMAIL, _GMAIL_APP_PASSWORD)
             server.sendmail(_GMAIL_SENDER_EMAIL, _EMAIL_RECIPIENTS, msg.as_string())
 
