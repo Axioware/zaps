@@ -4,10 +4,8 @@ import json
 import logging
 import os
 import re
-import smtplib
+import resend
 from datetime import datetime, timezone
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from typing import Any
 import anthropic
 import gspread
@@ -29,8 +27,6 @@ router = APIRouter(prefix="/api/smrt", tags=["smrt"])
 # ---------------------------------------------------------------------------
 # Email config
 # ---------------------------------------------------------------------------
-_GMAIL_SENDER_EMAIL = os.environ.get("GMAIL_SENDER_EMAIL")
-_GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 _EMAIL_RECIPIENTS = ["connorg@sellersfirstre.com", "blakef@sellersfirstre.com"]
 _EMAIL_SUBJECT = "call rubrics"
 
@@ -456,26 +452,22 @@ async def _post_to_salesforce_chatter(lead_id: str, analysis: dict, record: dict
 # ---------------------------------------------------------------------------
 # Step 3.5 - Email notification
 # ---------------------------------------------------------------------------
-
 async def _send_email(analysis: dict, record: dict) -> None:
     """
-    Send call analysis email via Gmail SMTP to configured recipients.
+    Send call analysis email via Resend API to configured recipients.
     Uses the same formatted content as Salesforce Chatter.
     """
     try:
         body_text = _build_chatter_body(analysis, record)
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = _EMAIL_SUBJECT
-        msg["From"] = _GMAIL_SENDER_EMAIL
-        msg["To"] = ", ".join(_EMAIL_RECIPIENTS)
-        msg.attach(MIMEText(body_text, "plain"))
+        resend.api_key = os.environ.get("RESEND_API_KEY")
 
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(_GMAIL_SENDER_EMAIL, _GMAIL_APP_PASSWORD)
-            server.sendmail(_GMAIL_SENDER_EMAIL, _EMAIL_RECIPIENTS, msg.as_string())
+        resend.Emails.send({
+            "from": "onboarding@resend.dev",
+            "to": _EMAIL_RECIPIENTS,
+            "subject": _EMAIL_SUBJECT,
+            "text": body_text,
+        })
 
         logger.info("Email sent to %s | subject=%s", ", ".join(_EMAIL_RECIPIENTS), _EMAIL_SUBJECT)
 
@@ -497,6 +489,8 @@ def _get_sheets_client() -> gspread.Client:
     if creds_source.strip().startswith("{"):
         try:
             service_account_info = json.loads(creds_source)
+            # Fix broken newlines in private key
+            service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
         except json.JSONDecodeError as exc:
             raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON contains invalid JSON") from exc
         creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
