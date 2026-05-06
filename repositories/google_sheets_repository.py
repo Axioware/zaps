@@ -15,10 +15,13 @@ logger = logging.getLogger("sheets_repo")
 
 
 # ── GOOGLE SHEETS CLIENT ──────────────────────────────────────────────────────
-
 def get_client():
     logger.info("Initializing Google Sheets client")
     service_account_info = json.loads(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}"))
+    
+    # Fix broken newlines in private key
+    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+    
     creds = Credentials.from_service_account_info(
         service_account_info,
         scopes=[
@@ -29,9 +32,6 @@ def get_client():
     client = gspread.authorize(creds)
     logger.info("Google Sheets client initialized successfully")
     return client
-
-
-_gs_client = None
 
 def get_sheets_client():
     global _gs_client
