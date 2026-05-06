@@ -13,8 +13,7 @@ from config.database import get_connection
 
 logger = logging.getLogger("sheets_repo")
 
-
-# ── GOOGLE SHEETS CLIENT ──────────────────────────────────────────────────────
+_gs_client = None
 def get_client():
     logger.info("Initializing Google Sheets client")
     service_account_info = json.loads(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}"))
