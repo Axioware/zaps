@@ -34,7 +34,7 @@ _EMAIL_SUBJECT = "call rubrics"
 # Hardcoded sheet config
 # ---------------------------------------------------------------------------
 _SMRT_SHEET_ID        = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
-_SMRT_WORKSHEET_NAME  = "SMRT webhook"
+_SMRT_WORKSHEET_NAME  = "Scoring Rubrics"
 
 # ---------------------------------------------------------------------------
 # In-memory accumulator (per call_id).
