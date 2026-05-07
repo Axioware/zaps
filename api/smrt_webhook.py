@@ -237,13 +237,13 @@ async def _get_transcript(record: dict) -> str | None:
         without_timestamps=True,
     )
 
-    if info.duration < 30:
-        logger.warning(
-            "Audio too short for call_id=%s | duration=%.1f seconds (minimum 30s required)",
-            record["call_id"],
-            info.duration,
-        )
-        return None
+    # if info.duration < 30:
+    #     logger.warning(
+    #         "Audio too short for call_id=%s | duration=%.1f seconds (minimum 30s required)",
+    #         record["call_id"],
+    #         info.duration,
+    #     )
+    #     return None
 
     transcript = " ".join(
         segment.text.strip() for segment in segments if segment.text.strip()
