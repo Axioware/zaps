@@ -375,14 +375,14 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
     grade     = a.get("grade", "N/A")
 
     lines = [
-        f"📞 CALL QUALITY ANALYSIS — {call_type}",
+        f"CALL QUALITY ANALYSIS — {call_type}",
         f"Overall Score: {overall}/10  |  Grade: {grade}",
     ]
 
     if record:
-        user_name = record.get("user_name", "N/A")
+        user_name    = record.get("user_name", "N/A")
         contact_name = record.get("contact_name", "N/A")
-        timestamp = record.get("timestamp", "N/A")
+        timestamp    = record.get("timestamp", "N/A")
         lines.extend([
             "",
             "─── CALL DETAILS ───",
@@ -398,16 +398,38 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
         "",
         "─── SCORES ───",
         f"Opening / Professionalism : {a.get('opening_score', 'N/A')}",
-        f"Going Deep               : {a.get('going_deep_score', 'N/A')}",
-        f"Motivation               : {a.get('motivation_score', 'N/A')}",
-        f"Urgency / Timeline       : {a.get('urgency_score', 'N/A')}",
-        f"Property Condition       : {a.get('condition_score', 'N/A')}",
-        f"Price / Equity / Payoff  : {a.get('price_score', 'N/A')}",
-        f"Objection Handling       : {a.get('objection_score', 'N/A')}",
-        f"Clear Next Step          : {a.get('next_step_score', 'N/A')}",
+        f"Rapport & Connection      : {a.get('rapport_connection_score', 'N/A')}",
+        f"Going Deep                : {a.get('going_deep_score', 'N/A')}",
+        f"Motivation                : {a.get('motivation_score', 'N/A')}",
+        f"Urgency / Timeline        : {a.get('urgency_score', 'N/A')}",
+        f"Property Condition        : {a.get('condition_score', 'N/A')}",
+        f"Price / Equity / Payoff   : {a.get('price_score', 'N/A')}",
+        f"Objection Handling        : {a.get('objection_score', 'N/A')}",
+        f"Clear Next Step           : {a.get('next_step_score', 'N/A')}",
+        f"Expectation Setting       : {a.get('expectation_setting_score', 'N/A')}",
+        f"Offer Delivery            : {a.get('offer_delivery_score', 'N/A')}",
+        f"Objection Handling (Dec)  : {a.get('objection_handling_declined_score', 'N/A')}",
+        f"Urgency Anchor            : {a.get('urgency_anchor_score', 'N/A')}",
+        f"Personal Connector        : {a.get('personal_connector_score', 'N/A')}",
+        f"Call Recap                : {a.get('call_recap_score', 'N/A')}",
+        f"Timing & Urgency          : {a.get('timing_urgency_score', 'N/A')}",
+        f"New Personal Intel        : {a.get('new_personal_intel_score', 'N/A')}",
+        f"Next Follow Up Set        : {a.get('next_followup_set_score', 'N/A')}",
         "",
         "─── FEEDBACK & RECOMMENDATIONS ───",
         a.get("rep_feedback", ""),
+        "",
+        "─── RAPPORT SUMMARY ───",
+        a.get("rapport_connection_summary", ""),
+        "",
+        "─── OBJECTION BOXING ───",
+        a.get("objection_boxing_result", ""),
+        "",
+        "─── INCOMPLETE CALL REASON ───",
+        a.get("incomplete_call_reason", ""),
+        "",
+        "─── COACHING SUMMARY ───",
+        a.get("coaching_summary_for_slack", ""),
         "",
         "─── NEXT BEST ACTION ───",
         a.get("next_best_action", ""),
@@ -501,35 +523,44 @@ def _get_sheets_client() -> gspread.Client:
 
 
 _SHEET_HEADERS = [
-    "Timestamp",                              # 1
-    "Call ID",                                # 2
-    "Caller",                                 # 3
-    "Call Type",                              # 4
-    "Overall Score",                          # 5
-    "Grade",                                  # 6
-    "Opening Score",                          # 7  — process_call: opening_score
-    "Going Deep Score",                       # 8  — process_call: going_deep_score
-    "Motivation Score",                       # 9  — process_call: motivation_score
-    "Urgency Score",                          # 10 — process_call: urgency_score
-    "Condition Score",                        # 11 — process_call: condition_score
-    "Price Score",                            # 12 — process_call: price_score
-    "Objection Score",                        # 13 — process_call: objection_score
-    "Next Step Score",                        # 14 — process_call: next_step_score
-    "Expectation Setting",                    # 15 — offer_call: expectation_setting_score
-    "Rapport and Connection",                 # 16 — ALL call types: rapport_connection_score
-    "Offer Delivery",                         # 17 — offer_call: offer_delivery_score
-    "Objection Handling on Declined Offer",   # 18 — offer_call: objection_handling_declined_score
-    "Urgency & Emotional Anchor",             # 19 — offer_call: urgency_anchor_score
-    "Clear next step",                        # 20 — offer_call: offer_next_step_score
-    "Call Summary",                           # 21
-    "Seller Motivation",                      # 22
-    "Seller Urgency",                         # 23
-    "Property Condition",                     # 24
-    "Price Notes",                            # 25
-    "Rep Feedback",                           # 26
-    "Next Best Action",                       # 27
-    "Missed Questions",                       # 28
-    "Call Transcript",                        # 29
+    "Timestamp",
+    "Call ID",
+    "Caller",
+    "Call Type",
+    "Overall Score",
+    "Grade",
+    "Opening Score",
+    "Going Deep Score",
+    "Motivation Score",
+    "Urgency Score",
+    "Condition Score",
+    "Price Score",
+    "Objection Score",
+    "Next Step Score",
+    "Expectation Setting Score",
+    "Rapport & Connection Score",
+    "Offer Delivery Score",
+    "Objection Handling Declined Score",
+    "Urgency Anchor Score",
+    "Clear Next Step Score",
+    "Personal Connector Score",
+    "Call Recap Score",
+    "Timing & Urgency Score",
+    "New Personal Intel Score",
+    "Next Follow Up Set Score",
+    "Call Summary",
+    "Seller Motivation",
+    "Seller Urgency",
+    "Property Condition",
+    "Price Notes",
+    "Rapport Connection Summary",
+    "Objection Boxing Result",
+    "Incomplete Call Reason",
+    "Rep Feedback",
+    "Next Best Action",
+    "Coaching Summary For Slack",
+    "Missed Questions",
+    "Call Transcript",
 ]
 
 
@@ -548,7 +579,7 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         try:
             ws = sh.worksheet(_SMRT_WORKSHEET_NAME)
         except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=_SMRT_WORKSHEET_NAME, rows=1000, cols=30)
+            ws = sh.add_worksheet(title=_SMRT_WORKSHEET_NAME, rows=1000, cols=40)
             logger.info("Created new worksheet '%s'", _SMRT_WORKSHEET_NAME)
 
     except Exception as exc:
@@ -557,47 +588,67 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
 
     _ensure_header_row(ws)
 
-    a      = analysis
+    a = analysis
+
     missed = "; ".join(a.get("missed_questions", []))
-    now    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     row = [
-        now,                                                          # 1  Timestamp
-        record.get("call_id", ""),                                    # 2  Call ID
-        record.get("caller", ""),                                     # 3  Caller
-        a.get("call_type", ""),                                       # 4  Call Type
-        a.get("overall_score", ""),                                   # 5  Overall Score
-        a.get("grade", ""),                                           # 6  Grade
-        # --- Columns 7-14: process_call scores (null for other types) ---
-        a.get("opening_score") if a.get("opening_score") is not None else "",         # 7  Opening Score
-        a.get("going_deep_score") if a.get("going_deep_score") is not None else "",   # 8  Going Deep Score
-        a.get("motivation_score") if a.get("motivation_score") is not None else "",   # 9  Motivation Score
-        a.get("urgency_score") if a.get("urgency_score") is not None else "",         # 10 Urgency Score
-        a.get("condition_score") if a.get("condition_score") is not None else "",     # 11 Condition Score
-        a.get("price_score") if a.get("price_score") is not None else "",             # 12 Price Score
-        a.get("objection_score") if a.get("objection_score") is not None else "",     # 13 Objection Score
-        a.get("next_step_score") if a.get("next_step_score") is not None else "",     # 14 Next Step Score
-        # --- Columns 15-20: offer_call scores (null for other types) ---
-        a.get("expectation_setting_score") if a.get("expectation_setting_score") is not None else "",              # 15 Expectation Setting
-        a.get("rapport_connection_score") if a.get("rapport_connection_score") is not None else "",               # 16 Rapport and Connection (ALL types)
-        a.get("offer_delivery_score") if a.get("offer_delivery_score") is not None else "",                        # 17 Offer Delivery
-        a.get("objection_handling_declined_score") if a.get("objection_handling_declined_score") is not None else "",  # 18 Objection Handling on Declined Offer
-        a.get("urgency_anchor_score") if a.get("urgency_anchor_score") is not None else "",                        # 19 Urgency & Emotional Anchor
-        a.get("offer_next_step_score") if a.get("offer_next_step_score") is not None else "",                      # 20 Clear next step (offer)
-        # --- Columns 21-29: narrative fields ---
-        a.get("call_summary", ""),                                    # 21 Call Summary
-        a.get("seller_motivation", ""),                               # 22 Seller Motivation
-        a.get("seller_urgency", ""),                                  # 23 Seller Urgency
-        a.get("property_condition", ""),                              # 24 Property Condition
-        a.get("price_notes", ""),                                     # 25 Price Notes
-        a.get("rep_feedback", ""),                                    # 26 Rep Feedback
-        a.get("next_best_action", ""),                                # 27 Next Best Action
-        missed,                                                        # 28 Missed Questions
-        transcript,                                                    # 29 Call Transcript
+        # Basic Info
+        now,
+        record.get("call_id", ""),
+        record.get("caller", ""),
+        a.get("call_type", ""),
+        a.get("overall_score", ""),
+        a.get("grade", ""),
+
+        # Core Scores (columns 7–14)
+        a.get("opening_score"),
+        a.get("going_deep_score"),
+        a.get("motivation_score"),
+        a.get("urgency_score"),
+        a.get("condition_score"),
+        a.get("price_score"),
+        a.get("objection_score"),
+        a.get("next_step_score"),
+
+        # Offer Call Scores (columns 15–20)
+        a.get("expectation_setting_score"),
+        a.get("rapport_connection_score"),   # ← was missing from row entirely
+        a.get("offer_delivery_score"),
+        a.get("objection_handling_declined_score"),
+        a.get("urgency_anchor_score"),
+        a.get("clear_next_step_score"),
+
+        # Follow Up Scores (columns 21–25)
+        a.get("personal_connector_score"),
+        a.get("call_recap_score"),
+        a.get("timing_urgency_score"),
+        a.get("new_personal_intel_score"),
+        a.get("next_followup_set_score"),
+
+        # Narrative Fields (columns 26–38)
+        a.get("call_summary", ""),
+        a.get("seller_motivation", ""),
+        a.get("seller_urgency", ""),
+        a.get("property_condition", ""),
+        a.get("price_notes", ""),
+        a.get("rapport_connection_summary", ""),
+        a.get("objection_boxing_result", ""),
+        a.get("incomplete_call_reason", ""),
+        a.get("rep_feedback", ""),
+        a.get("next_best_action", ""),
+        a.get("coaching_summary_for_slack", ""),
+        missed,
+        transcript,
     ]
- 
+
     ws.append_row(row, value_input_option="USER_ENTERED")
+
     logger.info(
         "Sheet row appended | call_id=%s | sheet=%s | tab=%s",
-        record.get("call_id"), _SMRT_SHEET_ID, _SMRT_WORKSHEET_NAME,
+        record.get("call_id"),
+        _SMRT_SHEET_ID,
+        _SMRT_WORKSHEET_NAME,
     )
