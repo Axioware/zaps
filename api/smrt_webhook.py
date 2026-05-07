@@ -515,6 +515,12 @@ _SHEET_HEADERS = [
     "Price Score",
     "Objection Score",
     "Next Step Score",
+    "Expectation Setting",
+    "Rapport and Connection",
+    "Offer Delivery",
+    "Objection Handling on Declined Offer",
+    "Urgency & Emotional Anchor",
+    "Clear next step",
     "Call Summary",
     "Seller Motivation",
     "Seller Urgency",
@@ -556,29 +562,38 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
     now    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     row = [
-        now,
-        record.get("call_id", ""),
-        record.get("caller", ""),
-        a.get("call_type", ""),
-        a.get("overall_score", ""),
-        a.get("grade", ""),
-        a.get("opening_score", ""),
-        a.get("going_deep_score", ""),
-        a.get("motivation_score", ""),
-        a.get("urgency_score", ""),
-        a.get("condition_score", ""),
-        a.get("price_score", ""),
-        a.get("objection_score", ""),
-        a.get("next_step_score", ""),
-        a.get("call_summary", ""),
-        a.get("seller_motivation", ""),
-        a.get("seller_urgency", ""),
-        a.get("property_condition", ""),
-        a.get("price_notes", ""),
-        a.get("rep_feedback", ""),
-        a.get("next_best_action", ""),
-        missed,
-        transcript,
+        now,                                                    # Timestamp
+        record.get("call_id", ""),                             # Call ID
+        record.get("caller", ""),                              # Caller
+        a.get("call_type", ""),                                # Call Type
+        a.get("overall_score", ""),                            # Overall Score
+        a.get("grade", ""),                                    # Grade
+        # --- Process Call columns (blank for offer/follow-up) ---
+        a.get("opening_score") or "",                          # Opening Score
+        a.get("going_deep_score") or "",                       # Going Deep Score
+        a.get("motivation_score") or "",                       # Motivation Score
+        a.get("urgency_score") or "",                          # Urgency Score
+        a.get("condition_score") or "",                        # Condition Score
+        a.get("price_score") or "",                            # Price Score
+        a.get("objection_score") or "",                        # Objection Score
+        a.get("next_step_score") or "",                        # Next Step Score
+        # --- Offer Call columns (blank for process/follow-up) ---
+        a.get("expectation_setting_score") or "",              # Expectation Setting
+        a.get("rapport_connection_score") or "",               # Rapport and Connection
+        a.get("offer_delivery_score") or "",                   # Offer Delivery
+        a.get("objection_handling_declined_score") or "",      # Objection Handling on Declined Offer
+        a.get("urgency_anchor_score") or "",                   # Urgency & Emotional Anchor
+        a.get("offer_next_step_score") or "",                  # Clear next step (offer)
+        # --- Narrative fields ---
+        a.get("call_summary", ""),                             # Call Summary
+        a.get("seller_motivation", ""),                        # Seller Motivation
+        a.get("seller_urgency", ""),                           # Seller Urgency
+        a.get("property_condition", ""),                       # Property Condition
+        a.get("price_notes", ""),                              # Price Notes
+        a.get("rep_feedback", ""),                             # Rep Feedback
+        a.get("next_best_action", ""),                         # Next Best Action
+        missed,                                                 # Missed Questions
+        transcript,                                            # Call Transcript
     ]
 
     ws.append_row(row, value_input_option="USER_ENTERED")
