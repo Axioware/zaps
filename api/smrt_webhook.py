@@ -500,7 +500,7 @@ def _get_sheets_client() -> gspread.Client:
     return gspread.authorize(creds)
 
 
-__SHEET_HEADERS = [
+_SHEET_HEADERS = [
     "Timestamp",                              # 1
     "Call ID",                                # 2
     "Caller",                                 # 3
