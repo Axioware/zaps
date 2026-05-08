@@ -24,22 +24,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/smrt", tags=["smrt"])
 
-# ---------------------------------------------------------------------------
-# Email config
-# ---------------------------------------------------------------------------
 _EMAIL_RECIPIENTS = ["connorg@sellersfirstre.com", "blakef@sellersfirstre.com"]
 _EMAIL_SUBJECT = "call rubrics"
 
-# ---------------------------------------------------------------------------
-# Hardcoded sheet config
-# ---------------------------------------------------------------------------
 _SMRT_SHEET_ID        = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
 _SMRT_WORKSHEET_NAME  = "Scoring Rubrics"
 
-# ---------------------------------------------------------------------------
-# In-memory accumulator (per call_id).
-# Accumulates payloads until we have everything we need.
-# ---------------------------------------------------------------------------
 _call_store: dict[str, dict[str, Any]] = {}
 
 
@@ -52,8 +42,8 @@ def _get_or_create(call_id: str) -> dict[str, Any]:
             "audio_url": None,
             "summary_text": None,
             "keywords": [],
-            "caller": None,
-            "receiver": None,
+            "call_from": None,
+            "call_to": None,
             "timestamp": None,
             "status": None,
             "caller_id_name": None,
@@ -65,6 +55,12 @@ def _get_or_create(call_id: str) -> dict[str, Any]:
             "device": None,
             "event": None,
             "processed": False,
+            # new fields
+            "record_id": None,
+            "call_link": None,
+            "lead_owner": None,
+            "opportunity_owner": None,
+            "duration": None,
         }
     return _call_store[call_id]
 
@@ -81,10 +77,6 @@ def _get_whisper_model() -> WhisperModel:
         logger.info("Loaded Whisper model %s on %s", _WHISPER_MODEL_SIZE, _WHISPER_DEVICE)
     return _WHISPER_MODEL
 
-
-# ---------------------------------------------------------------------------
-# Webhook endpoint
-# ---------------------------------------------------------------------------
 
 @router.post("/call-ended")
 async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
@@ -119,8 +111,12 @@ async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
     record["device"] = record["device"] or payload.get("device")
     record["audio_url"] = record["audio_url"] or payload.get("recordingUrl") or payload.get("audioUrl")
     record["timestamp"] = record["timestamp"] or payload.get("date") or payload.get("timestamp") or payload.get("endedAt")
-
-    # ---- Normalise each event type ----------------------------------------
+    # populate new fields from payload
+    record["record_id"] = record["record_id"] or payload.get("recordId") or payload.get("record_id")
+    record["call_link"] = record["call_link"] or payload.get("callLink") or payload.get("call_link")
+    record["lead_owner"] = record["lead_owner"] or payload.get("leadOwner") or payload.get("lead_owner")
+    record["opportunity_owner"] = record["opportunity_owner"] or payload.get("opportunityOwner") or payload.get("opportunity_owner")
+    record["duration"] = record["duration"] or payload.get("duration") or payload.get("callDuration")
 
     if "status" in event_type.lower() or event_type == "call_status_updated":
         record["status"] = payload.get("status") or payload.get("callStatus")
@@ -128,8 +124,9 @@ async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
 
     elif "complet" in event_type.lower() or event_type == "call_completed":
         record["completed"] = True
-        record["caller"] = record["caller"] or payload.get("caller") or payload.get("from")
-        record["receiver"] = record["receiver"] or payload.get("receiver") or payload.get("to")
+        # renamed: caller → call_from, receiver → call_to
+        record["call_from"] = record["call_from"] or payload.get("caller") or payload.get("from")
+        record["call_to"] = record["call_to"] or payload.get("receiver") or payload.get("to")
         logger.info("Marking completed for %s", call_id)
 
     elif "transcript" in event_type.lower():
@@ -138,16 +135,14 @@ async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
             or payload.get("transcriptText")
             or payload.get("text")
         )
-        record["caller"] = record["caller"] or payload.get("caller")
-        record["receiver"] = record["receiver"] or payload.get("receiver")
+        record["call_from"] = record["call_from"] or payload.get("caller")
+        record["call_to"] = record["call_to"] or payload.get("receiver")
 
     elif "summary" in event_type.lower():
         record["summary_text"] = payload.get("summary") or payload.get("text")
 
     elif "keyword" in event_type.lower():
         record["keywords"] = payload.get("keywords") or []
-
-    # ---- Decide whether to run the full pipeline --------------------------
 
     ready = (
         not record["processed"]
@@ -162,35 +157,27 @@ async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
     return {"status": "ok", "call_id": call_id, "pipeline_triggered": ready}
 
 
-# ---------------------------------------------------------------------------
-# Pipeline
-# ---------------------------------------------------------------------------
-
 async def _run_pipeline(record: dict):
     call_id = record["call_id"]
     logger.info("Pipeline starting for call_id=%s", call_id)
 
     try:
-        # 1. Get transcript text
         transcript = await _get_transcript(record)
         if not transcript:
             logger.warning("No transcript for call_id=%s — aborting", call_id)
             return
 
-        # 2. Score with Claude
         analysis = await _score_with_claude(transcript)
 
-        # 3. Salesforce Chatter
+        # use call_from (previously caller) for SF lead resolution
         sf_lead_id = await _resolve_salesforce_lead(record)
         if sf_lead_id:
             await _post_to_salesforce_chatter(sf_lead_id, analysis, record)
         else:
             logger.warning("No Salesforce lead found for call_id=%s", call_id)
 
-        # 3.5. Send email
         await _send_email(analysis, record)
 
-        # 4. Google Sheets
         _append_to_google_sheet(record, analysis, transcript)
 
         logger.info("Pipeline complete for call_id=%s", call_id)
@@ -198,10 +185,6 @@ async def _run_pipeline(record: dict):
     except Exception as exc:
         logger.exception("Pipeline failed for call_id=%s: %s", call_id, exc)
 
-
-# ---------------------------------------------------------------------------
-# Step 1 - Transcript (Claude instead of Whisper)
-# ---------------------------------------------------------------------------
 
 async def _get_transcript(record: dict) -> str | None:
     if record.get("transcript_text"):
@@ -255,11 +238,6 @@ async def _get_transcript(record: dict) -> str | None:
         info.duration,
     )
     return transcript or None
-
-
-# ---------------------------------------------------------------------------
-# Step 2 - Claude scoring
-# ---------------------------------------------------------------------------
 
 
 def _extract_json_text(raw: str) -> str:
@@ -331,12 +309,9 @@ async def _score_with_claude(transcript: str) -> dict:
         raise ValueError(f"Claude JSON parse error: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# Step 3 - Salesforce (httpx + bearer token)
-# ---------------------------------------------------------------------------
-
 async def _resolve_salesforce_lead(record: dict) -> str | None:
-    phone = record.get("caller") or record.get("receiver")
+    # use call_from (previously caller) for phone lookup
+    phone = record.get("call_from") or record.get("call_to")
     if not phone:
         return None
 
@@ -383,12 +358,23 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
         user_name    = record.get("user_name", "N/A")
         contact_name = record.get("contact_name", "N/A")
         timestamp    = record.get("timestamp", "N/A")
+        # updated to use call_from/call_to and include new fields
+        call_from    = record.get("call_from", "N/A")
+        call_to      = record.get("call_to", "N/A")
+        lead_owner   = record.get("lead_owner", "N/A")
+        opp_owner    = record.get("opportunity_owner", "N/A")
+        duration     = record.get("duration", "N/A")
         lines.extend([
             "",
             "─── CALL DETAILS ───",
-            f"Rep Name        : {user_name}",
-            f"Contact Name    : {contact_name}",
-            f"Date/Time       : {timestamp}",
+            f"Rep Name          : {user_name}",
+            f"Contact Name      : {contact_name}",
+            f"Date/Time         : {timestamp}",
+            f"Call From         : {call_from}",
+            f"Call To           : {call_to}",
+            f"Lead Owner        : {lead_owner}",
+            f"Opportunity Owner : {opp_owner}",
+            f"Duration          : {duration}",
         ])
 
     lines.extend([
@@ -471,9 +457,6 @@ async def _post_to_salesforce_chatter(lead_id: str, analysis: dict, record: dict
     logger.info("Chatter posted for lead %s | status=%s", lead_id, res.status_code)
 
 
-# ---------------------------------------------------------------------------
-# Step 3.5 - Email notification
-# ---------------------------------------------------------------------------
 async def _send_email(analysis: dict, record: dict) -> None:
     """
     Send call analysis email via Resend API to configured recipients.
@@ -497,10 +480,6 @@ async def _send_email(analysis: dict, record: dict) -> None:
         logger.error("Failed to send email: %s", exc)
 
 
-# ---------------------------------------------------------------------------
-# Step 4 - Google Sheets
-# ---------------------------------------------------------------------------
-
 def _get_sheets_client() -> gspread.Client:
     creds_source = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
     scopes = [
@@ -511,7 +490,6 @@ def _get_sheets_client() -> gspread.Client:
     if creds_source.strip().startswith("{"):
         try:
             service_account_info = json.loads(creds_source)
-            # Fix broken newlines in private key
             service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
         except json.JSONDecodeError as exc:
             raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON contains invalid JSON") from exc
@@ -522,11 +500,18 @@ def _get_sheets_client() -> gspread.Client:
     return gspread.authorize(creds)
 
 
+# updated headers to match new column order and names
 _SHEET_HEADERS = [
-    "Timestamp",
     "Call ID",
-    "Caller",
+    "Record ID",
+    "Call Link",
+    "Call From",
+    "Call To",
+    "Lead Owner",
+    "Opportunity Owner",
     "Call Type",
+    "Timestamp",
+    "Duration",
     "Overall Score",
     "Grade",
     "Opening Score",
@@ -537,26 +522,26 @@ _SHEET_HEADERS = [
     "Price Score",
     "Objection Score",
     "Next Step Score",
+    "Seller Motivation",
+    "Seller Urgency",
+    "Property Condition",
     "Expectation Setting Score",
     "Rapport & Connection Score",
     "Offer Delivery Score",
     "Objection Handling Declined Score",
     "Urgency Anchor Score",
     "Clear Next Step Score",
+    "Objection Boxing Result",
+    "Incomplete Call Reason",
     "Personal Connector Score",
     "Call Recap Score",
     "Timing & Urgency Score",
     "New Personal Intel Score",
     "Next Follow Up Set Score",
     "Call Summary",
-    "Seller Motivation",
-    "Seller Urgency",
-    "Property Condition",
-    "Price Notes",
-    "Rapport Connection Summary",
-    "Objection Boxing Result",
-    "Incomplete Call Reason",
     "Rep Feedback",
+    "Rapport Connection Summary",
+    "Price Notes",
     "Next Best Action",
     "Coaching Summary For Slack",
     "Missed Questions",
@@ -566,7 +551,7 @@ _SHEET_HEADERS = [
 
 def _ensure_header_row(worksheet: gspread.Worksheet) -> None:
     first_row = worksheet.row_values(1)
-    if not first_row or first_row[0] != "Timestamp":
+    if not first_row or first_row[0] != "Call ID":
         worksheet.insert_row(_SHEET_HEADERS, index=1)
         logger.info("Header row written to '%s'", _SMRT_WORKSHEET_NAME)
 
@@ -579,7 +564,7 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         try:
             ws = sh.worksheet(_SMRT_WORKSHEET_NAME)
         except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=_SMRT_WORKSHEET_NAME, rows=1000, cols=40)
+            ws = sh.add_worksheet(title=_SMRT_WORKSHEET_NAME, rows=1000, cols=50)
             logger.info("Created new worksheet '%s'", _SMRT_WORKSHEET_NAME)
 
     except Exception as exc:
@@ -589,59 +574,54 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
     _ensure_header_row(ws)
 
     a = analysis
-
     missed = "; ".join(a.get("missed_questions", []))
-
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     row = [
-        # Basic Info
-        now,
-        record.get("call_id", ""),
-        record.get("caller", ""),
-        a.get("call_type", ""),
-        a.get("overall_score", ""),
-        a.get("grade", ""),
-
-        # Core Scores (columns 7–14)
-        a.get("opening_score"),
-        a.get("going_deep_score"),
-        a.get("motivation_score"),
-        a.get("urgency_score"),
-        a.get("condition_score"),
-        a.get("price_score"),
-        a.get("objection_score"),
-        a.get("next_step_score"),
-
-        # Offer Call Scores (columns 15–20)
-        a.get("expectation_setting_score"),
-        a.get("rapport_connection_score"),   # ← was missing from row entirely
-        a.get("offer_delivery_score"),
-        a.get("objection_handling_declined_score"),
-        a.get("urgency_anchor_score"),
-        a.get("clear_next_step_score"),
-
-        # Follow Up Scores (columns 21–25)
-        a.get("personal_connector_score"),
-        a.get("call_recap_score"),
-        a.get("timing_urgency_score"),
-        a.get("new_personal_intel_score"),
-        a.get("next_followup_set_score"),
-
-        # Narrative Fields (columns 26–38)
-        a.get("call_summary", ""),
-        a.get("seller_motivation", ""),
-        a.get("seller_urgency", ""),
-        a.get("property_condition", ""),
-        a.get("price_notes", ""),
-        a.get("rapport_connection_summary", ""),
-        a.get("objection_boxing_result", ""),
-        a.get("incomplete_call_reason", ""),
-        a.get("rep_feedback", ""),
-        a.get("next_best_action", ""),
-        a.get("coaching_summary_for_slack", ""),
-        missed,
-        transcript,
+        record.get("call_id", ""),           # Call ID
+        record.get("record_id", ""),          # Record ID (new)
+        record.get("call_link", ""),          # Call Link (new)
+        record.get("call_from", ""),          # Call From (renamed from caller)
+        record.get("call_to", ""),            # Call To (new)
+        record.get("lead_owner", ""),         # Lead Owner (new)
+        record.get("opportunity_owner", ""),  # Opportunity Owner (new)
+        a.get("call_type", ""),               # Call Type
+        now,                                  # Timestamp
+        record.get("duration", ""),           # Duration (new)
+        a.get("overall_score", ""),           # Overall Score
+        a.get("grade", ""),                   # Grade
+        a.get("opening_score"),               # Opening Score
+        a.get("going_deep_score"),            # Going Deep Score
+        a.get("motivation_score"),            # Motivation Score
+        a.get("urgency_score"),               # Urgency Score
+        a.get("condition_score"),             # Condition Score
+        a.get("price_score"),                 # Price Score
+        a.get("objection_score"),             # Objection Score
+        a.get("next_step_score"),             # Next Step Score
+        a.get("seller_motivation", ""),       # Seller Motivation
+        a.get("seller_urgency", ""),          # Seller Urgency
+        a.get("property_condition", ""),      # Property Condition
+        a.get("expectation_setting_score"),   # Expectation Setting Score
+        a.get("rapport_connection_score"),    # Rapport & Connection Score
+        a.get("offer_delivery_score"),        # Offer Delivery Score
+        a.get("objection_handling_declined_score"),  # Objection Handling Declined Score
+        a.get("urgency_anchor_score"),        # Urgency Anchor Score
+        a.get("clear_next_step_score"),       # Clear Next Step Score
+        a.get("objection_boxing_result", ""), # Objection Boxing Result
+        a.get("incomplete_call_reason", ""),  # Incomplete Call Reason
+        a.get("personal_connector_score"),    # Personal Connector Score
+        a.get("call_recap_score"),            # Call Recap Score
+        a.get("timing_urgency_score"),        # Timing & Urgency Score
+        a.get("new_personal_intel_score"),    # New Personal Intel Score
+        a.get("next_followup_set_score"),     # Next Follow Up Set Score
+        a.get("call_summary", ""),            # Call Summary
+        a.get("rep_feedback", ""),            # Rep Feedback
+        a.get("rapport_connection_summary", ""),  # Rapport Connection Summary
+        a.get("price_notes", ""),             # Price Notes
+        a.get("next_best_action", ""),        # Next Best Action
+        a.get("coaching_summary_for_slack", ""),  # Coaching Summary For Slack
+        missed,                               # Missed Questions
+        transcript,                           # Call Transcript
     ]
 
     ws.append_row(row, value_input_option="USER_ENTERED")
