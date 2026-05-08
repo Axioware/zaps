@@ -343,6 +343,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             sf_id  = records[0]["Id"]
             sf_url = f"{SF_INSTANCE_URL}/lightning/r/Lead/{sf_id}/view"
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
+            logger.info("Lead found for phone %s: ID=%s, Owner=%s", phone, sf_id, record["lead_owner"])
             return sf_id, sf_url
 
         #  2. Opportunity direct phone lookup 
@@ -365,6 +366,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             sf_id      = opp["Id"]
             sf_url     = f"{SF_INSTANCE_URL}/lightning/r/Opportunity/{sf_id}/view"
             record["opportunity_owner"] = (opp.get("Owner") or {}).get("Name", "")
+            logger.info("Opportunity found for phone %s: ID=%s, Name=%s, Owner=%s", phone, sf_id, opp.get("Name", ""), record["opportunity_owner"])
             # lead_owner stays blank — this is a pure Opportunity record
             return sf_id, sf_url
 
@@ -379,6 +381,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             sf_id         = records[0]["Id"]
             sf_url        = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
+            logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone, sf_id, record["lead_owner"])
 
             # Try to get linked Opportunity owner via OpportunityContactRole
             opp_res = await safe_request(
@@ -396,9 +399,13 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             if opp_records:
                 opportunity = opp_records[0].get("Opportunity") or {}
                 record["opportunity_owner"] = (opportunity.get("Owner") or {}).get("Name", "")
+                logger.info("Linked Opportunity found for Contact %s: Opportunity ID=%s, Owner=%s", sf_id, opportunity.get("Id", ""), record["opportunity_owner"])
+            else:
+                logger.info("No linked Opportunity found for Contact %s", sf_id)
 
             return sf_id, sf_url
 
+    logger.info("No Lead, Opportunity, or Contact found for phone %s", phone)
     return None, None
 
 
