@@ -359,6 +359,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             headers=sf_headers,
         )
         opp_records = res.json().get("records", [])
+        logger.info("opp_records for phone %s: %s", phone, opp_records)
         if opp_records:
             opp        = opp_records[0]
             sf_id      = opp["Id"]
