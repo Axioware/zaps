@@ -332,7 +332,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
 
     async with get_client() as client:
 
-        # ── 1. Lead lookup ────────────────────────────────────────────────────
+        #  1. Lead lookup 
         res = await safe_request(
             client, "GET", query_url,
             params={"q": f"SELECT Id, Owner.Name FROM Lead WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
@@ -345,7 +345,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
             return sf_id, sf_url
 
-        # ── 2. Opportunity direct phone lookup ────────────────────────────────
+        #  2. Opportunity direct phone lookup 
         res = await safe_request(
             client, "GET", query_url,
             params={"q": (
@@ -367,7 +367,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             # lead_owner stays blank — this is a pure Opportunity record
             return sf_id, sf_url
 
-        # ── 3. Contact lookup (fallback) ──────────────────────────────────────
+        #  3. Contact lookup (fallback) 
         res = await safe_request(
             client, "GET", query_url,
             params={"q": f"SELECT Id, Owner.Name FROM Contact WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
@@ -424,7 +424,7 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
         duration     = record.get("duration", "N/A")
         lines.extend([
             "",
-            "─── CALL DETAILS ───",
+            " CALL DETAILS ",
             f"Rep Name          : {user_name}",
             f"Contact Name      : {contact_name}",
             f"Date/Time         : {timestamp}",
@@ -437,10 +437,10 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
 
     lines.extend([
         "",
-        "─── CALL SUMMARY ───",
+        " CALL SUMMARY ",
         a.get("call_summary", ""),
         "",
-        "─── SCORES ───",
+        " SCORES ",
         f"Opening / Professionalism : {a.get('opening_score', 'N/A')}",
         f"Rapport & Connection      : {a.get('rapport_connection_score', 'N/A')}",
         f"Going Deep                : {a.get('going_deep_score', 'N/A')}",
@@ -455,28 +455,28 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
         f"Objection Handling (Dec)  : {a.get('objection_handling_declined_score', 'N/A')}",
         f"Urgency Anchor            : {a.get('urgency_anchor_score', 'N/A')}",
         "",
-        "─── FEEDBACK & RECOMMENDATIONS ───",
+        " FEEDBACK & RECOMMENDATIONS ",
         a.get("rep_feedback", ""),
         "",
-        "─── RAPPORT SUMMARY ───",
+        " RAPPORT SUMMARY ",
         a.get("rapport_connection_summary", ""),
         "",
-        "─── OBJECTION BOXING ───",
+        " OBJECTION BOXING ",
         a.get("objection_boxing_result", ""),
         "",
-        "─── INCOMPLETE CALL REASON ───",
+        " INCOMPLETE CALL REASON ",
         a.get("incomplete_call_reason", ""),
         "",
-        "─── COACHING SUMMARY ───",
+        " COACHING SUMMARY ",
         a.get("coaching_summary_for_slack", ""),
         "",
-        "─── NEXT BEST ACTION ───",
+        " NEXT BEST ACTION ",
         a.get("next_best_action", ""),
     ])
 
     missed = a.get("missed_questions", [])
     if missed:
-        lines += ["", "─── MISSED QUESTIONS ───"]
+        lines += ["", " MISSED QUESTIONS "]
         lines += [f"• {q}" for q in missed]
 
     return "\n".join(lines)

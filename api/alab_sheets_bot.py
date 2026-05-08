@@ -18,7 +18,7 @@ Router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# ── TRIGGER CALLS (CELERY ENTRY) ──────────────────────────────────────────────
+#  TRIGGER CALLS (CELERY ENTRY) 
 
 async def trigger_calls(sheet_id: int):
     try:
@@ -111,7 +111,7 @@ async def trigger_calls(sheet_id: int):
         return {"error": str(e)}
 
 
-# ── POST CALL WEBHOOK ─────────────────────────────────────────────────────────
+#  POST CALL WEBHOOK 
 
 @Router.post("/post-call")
 async def post_call_update(request: Request):
@@ -133,12 +133,12 @@ async def post_call_update(request: Request):
         phone   = str(called_number).replace("+", "")
         conv_id = payload.get("conversation_id")
 
-        # ── DATA FROM PAYLOAD ─────────────────────────────────────────────────
+        #  DATA FROM PAYLOAD 
         analysis = payload.get("analysis", {}).get("data_collection_results", {})
         metadata = payload.get("metadata", {})
         duration = float(metadata.get("call_duration_secs", 0) or 0)
 
-        # ── VOICEMAIL DETECTION ───────────────────────────────────────────────
+        #  VOICEMAIL DETECTION 
         # Old code read from data_collection_results["voicemail_detected"] which
         # doesn't exist in ElevenLabs payloads. Fixed to read termination_reason
         # and features_usage — the two fields ElevenLabs actually sends.
@@ -152,7 +152,7 @@ async def post_call_update(request: Request):
                         .get("used", False)
             )
 
-        # ── TRANSFER DETECTION ────────────────────────────────────────────────
+        #  TRANSFER DETECTION 
         transfer_used = str(
             metadata.get("features_usage", {})
                     .get("transfer_to_number", {})
@@ -165,7 +165,7 @@ async def post_call_update(request: Request):
             f"voicemail_flag={voicemail_flag} | transfer_used={transfer_used}"
         )
 
-        # ── FIND SHEET + ROW ──────────────────────────────────────────────────
+        #  FIND SHEET + ROW 
         client = get_client()
 
         with get_connection() as conn:
@@ -199,12 +199,12 @@ async def post_call_update(request: Request):
             logger.warning("No matching lead found in any sheet")
             return {"message": "No matching lead"}
 
-        # ── RESOLVE RETRY CONFIG ──────────────────────────────────────────────
+        #  RESOLVE RETRY CONFIG 
         retries_on_voicemail = (sheet_db.get("retries_on_voicemail") or 0) if sheet_db else 0
         agent_id             = sheet_db.get("agent_id") if sheet_db else None
         sheet_id             = sheet_db.get("id") if sheet_db else None
 
-        # ── DETERMINE DISPOSITION + FIRE RETRY IF NEEDED ─────────────────────
+        #  DETERMINE DISPOSITION + FIRE RETRY IF NEEDED 
         if duration <= 0:
             disposition = "Not Answered"
 
@@ -219,7 +219,7 @@ async def post_call_update(request: Request):
                     f"→ placing retry call | phone={phone} conv_id={conv_id}"
                 )
 
-                # ── PLACE RETRY CALL ──────────────────────────────────────────
+                #  PLACE RETRY CALL 
                 try:
                     area_code        = phone[1:4] if len(phone) >= 4 else phone[:3]
                     phone_id, called_from_retry = get_area_mapping(area_code)
@@ -281,7 +281,7 @@ async def post_call_update(request: Request):
         else:
             disposition = "Answered"
 
-        # ── TIME CONVERSION ───────────────────────────────────────────────────
+        #  TIME CONVERSION 
         timestamp    = payload.get("event_timestamp")
         pacific_time = ""
         if timestamp:
@@ -289,7 +289,7 @@ async def post_call_update(request: Request):
             pacific      = pytz.timezone("America/Los_Angeles")
             pacific_time = dt.replace(tzinfo=pytz.utc).astimezone(pacific).strftime("%m/%d/%Y %H:%M:%S")
 
-        # ── UPDATE GOOGLE SHEET ROW ───────────────────────────────────────────
+        #  UPDATE GOOGLE SHEET ROW 
         sheet.update(f"L{row_id}", [[disposition]])
         sheet.update(f"M{row_id}", [[pacific_time]])
         sheet.update(f"O{row_id}", [[analysis.get("wrong_call", {}).get("value")]])
@@ -300,7 +300,7 @@ async def post_call_update(request: Request):
 
         logger.info(f"Post-call updated row {row_id} | disposition={disposition}")
 
-        # ── UPDATE CALL LOG ───────────────────────────────────────────────────
+        #  UPDATE CALL LOG 
         if conv_id:
             update_call_log(
                 conversation_id = conv_id,

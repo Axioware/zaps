@@ -195,9 +195,7 @@ def update_sheet(sheet_id: int, data: SheetUpdate):
     return {"message": "Sheet updated"}
 
 
-# 
 #  TOGGLE STATUS
-# 
 
 @router.patch("/sheets/{sheet_id}/status")
 def toggle_status(sheet_id: int, data: SheetStatusUpdate):

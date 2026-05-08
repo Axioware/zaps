@@ -48,7 +48,7 @@ def get_sheets_client():
     return _gs_client
 
 
-# ── AREA CODE MAP ─────────────────────────────────────────────────────────────
+#  AREA CODE MAP 
 
 def load_area_code_map():
     logger.info("Loading area code mapping from Google Sheet")
@@ -66,7 +66,7 @@ def load_area_code_map():
     return area_map
 
 
-# ── PHONE ROW FINDER ──────────────────────────────────────────────────────────
+#  PHONE ROW FINDER 
 
 def find_row_by_phone(sheet, phone):
     logger.info(f"Searching for phone in sheet: {phone}")
@@ -81,7 +81,7 @@ def find_row_by_phone(sheet, phone):
     return None
 
 
-# ── SHARED HELPERS ────────────────────────────────────────────────────────────
+#  SHARED HELPERS 
 
 def _safe(val):
     return str(val) if val is not None else ""
@@ -147,7 +147,7 @@ def _build_data_map(
     }
 
 
-# ── LOG TO SHEETS (trigger-time placeholder row) ──────────────────────────────
+#  LOG TO SHEETS (trigger-time placeholder row) 
 
 def log_to_sheets(
     lead_info, lead_id, duration, conv_id,
@@ -199,13 +199,13 @@ def log_to_sheets(
         logger.error(f"Google Sheets error (log_to_sheets): {repr(e)}")
 
 
-# ── UPDATE SHEET ROW (post-call webhook) ──────────────────────────────────────
+#  UPDATE SHEET ROW (post-call webhook) 
 
 def update_sheet_row(
     lead_info, lead_id, duration, conv_id,
     analysis=None, call_count=0, called_from="", called_to="",
     sheet_url=None, worksheet_name=None,
-    call_disposition=None, voicemail_detected=False,   # ✅ accepted from webhook
+    call_disposition=None, voicemail_detected=False,   #  accepted from webhook
 ):
     """
     Finds the existing placeholder row (matched by 'Called To') and overwrites
@@ -228,7 +228,7 @@ def update_sheet_row(
         if duration > 0:
             call_count = (call_count or 0) + 1
 
-        # ✅ Use the disposition decided by the webhook — no recalculation from duration
+        #  Use the disposition decided by the webhook — no recalculation from duration
         disposition = _resolve_disposition(duration, analysis, call_disposition, voicemail_detected)
 
         los_angeles_tz = pytz.timezone("America/Los_Angeles")
@@ -241,7 +241,7 @@ def update_sheet_row(
             disposition, timestamp_str,
         )
 
-        # ── Find the row whose "Called To" matches this call ──────────────────
+        #  Find the row whose "Called To" matches this call 
         called_to_digits = re.sub(r"\D", "", called_to)
 
         try:
@@ -268,7 +268,7 @@ def update_sheet_row(
             sheet.append_row(row, value_input_option="USER_ENTERED")
             return
 
-        # ── Overwrite matched row in one batch call ───────────────────────────
+        #  Overwrite matched row in one batch call 
         new_row  = [data_map.get(col, "") for col in headers]
         col_end  = len(headers)
         range_a1 = (

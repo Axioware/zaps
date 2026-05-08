@@ -31,7 +31,7 @@ Router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# ── HELPER: normalise a raw Salesforce phone string ───────────────────────────
+#  HELPER: normalise a raw Salesforce phone string 
 
 def _clean_phone(raw: str) -> str:
     """Strip non-digits; return empty string if unusable."""
@@ -40,7 +40,7 @@ def _clean_phone(raw: str) -> str:
     return re.sub(r"\D", "", raw)
 
 
-# ── CELERY ENTRY: called by process_sheet() for salesforce_job ────────────────
+#  CELERY ENTRY: called by process_sheet() for salesforce_job 
 
 async def trigger_sf_calls(sheet_id: int):
     logger.info(f"SF trigger started for sheet_id={sheet_id}")
@@ -129,7 +129,7 @@ async def trigger_sf_calls(sheet_id: int):
         return {"error": str(e)}
 
 
-# ── PLACE ONE OUTBOUND CALL ───────────────────────────────────────────────────
+#  PLACE ONE OUTBOUND CALL 
 
 async def _place_outbound_call(client, agent_id, phone_id, digits, lead_id, address):
     """
@@ -188,7 +188,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
             sheet_id        = sheet_id,
         )
 
-    # ── INSERT PLACEHOLDER ROW IN GOOGLE SHEET AT TRIGGER TIME ───────────────
+    #  INSERT PLACEHOLDER ROW IN GOOGLE SHEET AT TRIGGER TIME 
     try:
         with get_connection() as conn:
             job_row = conn.execute(
@@ -223,7 +223,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
     except Exception as e:
         logger.error(f"Trigger: error adding sheet row for lead {lead_id}: {e}", exc_info=True)
 
-    # ── STAMP SF LEAD ─────────────────────────────────────────────────────────
+    #  STAMP SF LEAD 
     pacific_now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000+0000")
     update_url  = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
 
@@ -237,7 +237,7 @@ async def _process_sf_lead(client, lead, agent_id, sheet_id, sf_headers, query_u
     logger.info(f"SF lead {lead_id} stamped, conv_id={conv_id}")
 
 
-# ── POST-CALL WEBHOOK ─────────────────────────────────────────────────────────
+#  POST-CALL WEBHOOK 
 
 @Router.post("/sf-post-call")
 async def sf_post_call(request: Request):
@@ -255,7 +255,7 @@ async def sf_post_call(request: Request):
         duration    = int(metadata.get("call_duration_secs", 0))
         call_status = str(payload.get("status", "unknown"))
 
-        # ── TRANSCRIPT ────────────────────────────────────────────────────────
+        #  TRANSCRIPT 
         transcript_lines = []
         for msg in payload.get("transcript", []):
             role = msg.get("role", "").capitalize()
@@ -264,7 +264,7 @@ async def sf_post_call(request: Request):
                 transcript_lines.append(f"{role}: {text}")
         transcript_str = "\n".join(transcript_lines) or "No transcript"
 
-        # ── IDs ───────────────────────────────────────────────────────────────
+        #  IDs 
         custom_data = (
             payload.get("conversation_initiation_client_data", {})
                    .get("dynamic_variables", {})
@@ -277,7 +277,7 @@ async def sf_post_call(request: Request):
             logger.error("SF post-call: missing lead_id")
             return {"error": "Missing lead_id"}
 
-        # ── VOICEMAIL DETECTION ───────────────────────────────────────────────
+        #  VOICEMAIL DETECTION 
         termination_reason = metadata.get("termination_reason", "")
         voicemail_detected = "voicemail" in termination_reason.lower()
 
@@ -293,7 +293,7 @@ async def sf_post_call(request: Request):
             f"termination_reason='{termination_reason}' | voicemail_detected={voicemail_detected}"
         )
 
-        # ── RESOLVE sheet_id, called_from ─────────────────────────────────────
+        #  RESOLVE sheet_id, called_from 
         called_from             = DEFAULT_PHONE
         sheet_id                = None
         postcall_sheet_url      = None
@@ -321,14 +321,14 @@ async def sf_post_call(request: Request):
                     agent_id                = job_row.get("agent_id")
                     retries_on_voicemail    = job_row.get("retries_on_voicemail") or 0
 
-        # ── DETERMINE CALL DISPOSITION + RETRY LOGIC ──────────────────────────
+        #  DETERMINE CALL DISPOSITION + RETRY LOGIC 
         if duration <= 0:
             call_disposition = "Not Answered"
 
         elif voicemail_detected:
             # Check how many retries have already been used for this conv
             if can_retry_on_voicemail(conv_id, retries_on_voicemail):
-                # ✅ Increment BEFORE placing the retry so the new call
+                #    Increment BEFORE placing the retry so the new call
                 #    starts with an accurate count already in the DB.
                 increment_voicemail_retry_count(conv_id)
                 retry_count = (get_call_log(conv_id) or {}).get("voicemail_retry_count", 1)
@@ -337,7 +337,7 @@ async def sf_post_call(request: Request):
                     f"→ placing retry call | lead_id={lead_id} conv_id={conv_id}"
                 )
 
-                # ── PLACE THE RETRY CALL ──────────────────────────────────────
+                #  PLACE THE RETRY CALL 
                 try:
                     # Resolve phone details from the original call log
                     original_log = get_call_log(conv_id)
@@ -377,7 +377,7 @@ async def sf_post_call(request: Request):
                                     lead_id         = lead_id,
                                     sheet_id        = sheet_id,
                                 )
-                                # ✅ Copy the retry count so the new conv_id
+                                #    Copy the retry count so the new conv_id
                                 #    inherits the same retry state and the limit
                                 #    is respected across the chain.
                                 with get_connection() as conn:
@@ -419,7 +419,7 @@ async def sf_post_call(request: Request):
         else:
             call_disposition = "Answered"
 
-        # ── ANALYSIS FIELDS ───────────────────────────────────────────────────
+        #  ANALYSIS FIELDS 
         def get_field(key):
             return (
                 payload.get("analysis", {})
@@ -454,7 +454,7 @@ async def sf_post_call(request: Request):
             "call_disposition":      call_disposition,
         }
 
-        # ── UPDATE SALESFORCE ─────────────────────────────────────────────────
+        #  UPDATE SALESFORCE 
         access_token = await get_sf_access_token()
         sf_headers   = {"Authorization": f"Bearer {access_token}"}
         update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
@@ -475,7 +475,7 @@ async def sf_post_call(request: Request):
             get_res   = await client.get(update_url, headers=sf_headers)
             lead_info = get_res.json()
 
-        # ── UPDATE CALL LOG ───────────────────────────────────────────────────
+        #  UPDATE CALL LOG 
         if conv_id:
             update_call_log(
                 conversation_id  = conv_id,
@@ -485,7 +485,7 @@ async def sf_post_call(request: Request):
                 transcript       = transcript_str,
             )
 
-        # ── UPDATE GOOGLE SHEET ROW ───────────────────────────────────────────
+        #  UPDATE GOOGLE SHEET ROW 
         called_to = ""
         if conv_id:
             log = get_call_log(conv_id)
