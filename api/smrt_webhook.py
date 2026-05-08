@@ -225,13 +225,13 @@ async def _get_transcript(record: dict) -> str | None:
         without_timestamps=True,
     )
 
-    # if info.duration < 30:
-    #     logger.warning(
-    #         "Audio too short for call_id=%s | duration=%.1f seconds (minimum 30s required)",
-    #         record["call_id"],
-    #         info.duration,
-    #     )
-    #     return None
+    if info.duration < 30:
+        logger.warning(
+            "Audio too short for call_id=%s | duration=%.1f seconds (minimum 30s required)",
+            record["call_id"],
+            info.duration,
+        )
+        return None
 
     transcript = " ".join(
         segment.text.strip() for segment in segments if segment.text.strip()
@@ -317,11 +317,12 @@ async def _score_with_claude(transcript: str) -> dict:
 
 
 async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None, None]:
-    phone = record.get("call_from") or record.get("call_to")
-    if not phone:
+    phone_from = record.get("call_from")
+    phone_to = record.get("call_to")
+    if not phone_to:
         return None, None
 
-    digits  = re.sub(r"\D", "", str(phone))
+    digits  = re.sub(r"\D", "", str(phone_to))
     last_10 = digits[-10:] if len(digits) >= 10 else digits
     if not last_10:
         return None, None
@@ -335,15 +336,16 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
         #  1. Lead lookup 
         res = await safe_request(
             client, "GET", query_url,
-            params={"q": f"SELECT Id, Owner.Name FROM Lead WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
+            params={"q": f"SELECT Id, Owner.Name FROM Lead WHERE Phone LIKE '%{last_10}%' AND IsConverted = false LIMIT 1"},
             headers=sf_headers,
         )
         records = res.json().get("records", [])
         if records:
             sf_id  = records[0]["Id"]
             sf_url = f"{SF_INSTANCE_URL}/lightning/r/Lead/{sf_id}/view"
+            logger.info(sf_url)
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
-            logger.info("Lead found for phone %s: ID=%s, Owner=%s", phone, sf_id, record["lead_owner"])
+            logger.info("Lead found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["lead_owner"])
             return sf_id, sf_url
 
         #  2. Opportunity direct phone lookup 
@@ -360,13 +362,14 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             headers=sf_headers,
         )
         opp_records = res.json().get("records", [])
-        logger.info("opp_records for phone %s: %s", phone, opp_records)
+        logger.info("opp_records for phone %s: %s", phone_to, opp_records)
         if opp_records:
             opp        = opp_records[0]
             sf_id      = opp["Id"]
             sf_url     = f"{SF_INSTANCE_URL}/lightning/r/Opportunity/{sf_id}/view"
-            record["opportunity_owner"] = (opp.get("Owner") or {}).get("Name", "")
-            logger.info("Opportunity found for phone %s: ID=%s, Name=%s, Owner=%s", phone, sf_id, opp.get("Name", ""), record["opportunity_owner"])
+            owner = opp.get("Owner", {}).get("Name", "")
+            record["opportunity_owner"] = owner
+            logger.info("Opportunity found for phone %s: ID=%s, Name=%s, Owner=%s", phone_to, sf_id, opp.get("Name", ""), record["opportunity_owner"])
             # lead_owner stays blank — this is a pure Opportunity record
             return sf_id, sf_url
 
@@ -381,7 +384,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             sf_id         = records[0]["Id"]
             sf_url        = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
-            logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone, sf_id, record["lead_owner"])
+            logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["lead_owner"])
 
             # Try to get linked Opportunity owner via OpportunityContactRole
             opp_res = await safe_request(
@@ -405,7 +408,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
 
             return sf_id, sf_url
 
-    logger.info("No Lead, Opportunity, or Contact found for phone %s", phone)
+    logger.info("No Lead, Opportunity, or Contact found for phone %s", phone_to)
     return None, None
 
 
