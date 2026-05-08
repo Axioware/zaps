@@ -317,9 +317,6 @@ async def _score_with_claude(transcript: str) -> dict:
 
 
 async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None, None]:
-    # use call_from (previously caller) for phone lookup
-    # returns (sf_record_id, sf_record_url) — URL is used to build a clickable Sheets HYPERLINK
-    # also populates lead_owner and opportunity_owner directly onto record from Salesforce
     phone = record.get("call_from") or record.get("call_to")
     if not phone:
         return None, None
@@ -334,7 +331,8 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
     query_url    = f"{SF_INSTANCE_URL}/services/data/v57.0/query"
 
     async with get_client() as client:
-        # include Owner.Name so we get lead_owner in one query
+
+        # ── 1. Lead lookup ────────────────────────────────────────────────────
         res = await safe_request(
             client, "GET", query_url,
             params={"q": f"SELECT Id, Owner.Name FROM Lead WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
@@ -344,12 +342,32 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
         if records:
             sf_id  = records[0]["Id"]
             sf_url = f"{SF_INSTANCE_URL}/lightning/r/Lead/{sf_id}/view"
-            owner  = records[0].get("Owner") or {}
-            record["lead_owner"] = owner.get("Name", "")
-            # leads don't have a related Opportunity, so opportunity_owner stays blank
+            record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
             return sf_id, sf_url
 
-        # include Owner.Name and look up related Opportunity owner via Contact
+        # ── 2. Opportunity direct phone lookup ────────────────────────────────
+        res = await safe_request(
+            client, "GET", query_url,
+            params={"q": (
+                f"SELECT Id, Name, Owner.Name, Account.Phone, Account.PersonMobilePhone "
+                f"FROM Opportunity "
+                f"WHERE Account.Phone LIKE '%{last_10}%' "
+                f"   OR Account.PersonMobilePhone LIKE '%{last_10}%' "
+                f"ORDER BY CloseDate DESC NULLS LAST, CreatedDate DESC "
+                f"LIMIT 1"
+            )},
+            headers=sf_headers,
+        )
+        opp_records = res.json().get("records", [])
+        if opp_records:
+            opp        = opp_records[0]
+            sf_id      = opp["Id"]
+            sf_url     = f"{SF_INSTANCE_URL}/lightning/r/Opportunity/{sf_id}/view"
+            record["opportunity_owner"] = (opp.get("Owner") or {}).get("Name", "")
+            # lead_owner stays blank — this is a pure Opportunity record
+            return sf_id, sf_url
+
+        # ── 3. Contact lookup (fallback) ──────────────────────────────────────
         res = await safe_request(
             client, "GET", query_url,
             params={"q": f"SELECT Id, Owner.Name FROM Contact WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
@@ -357,24 +375,26 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
         )
         records = res.json().get("records", [])
         if records:
-            sf_id        = records[0]["Id"]
-            sf_url       = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
-            contact_owner = (records[0].get("Owner") or {}).get("Name", "")
-            record["lead_owner"] = contact_owner
+            sf_id         = records[0]["Id"]
+            sf_url        = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
+            record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
 
-            # fetch the most recent open Opportunity linked to this Contact for opportunity_owner
+            # Try to get linked Opportunity owner via OpportunityContactRole
             opp_res = await safe_request(
                 client, "GET", query_url,
                 params={"q": (
-                    f"SELECT Owner.Name FROM Opportunity "
-                    f"WHERE Id IN (SELECT OpportunityId FROM OpportunityContactRole WHERE ContactId = '{sf_id}') "
-                    f"ORDER BY CreatedDate DESC LIMIT 1"
+                    f"SELECT Opportunity.Id, Opportunity.Owner.Name "
+                    f"FROM OpportunityContactRole "
+                    f"WHERE ContactId = '{sf_id}' "
+                    f"ORDER BY IsPrimary DESC, Opportunity.CloseDate DESC NULLS LAST, Opportunity.CreatedDate DESC "
+                    f"LIMIT 1"
                 )},
                 headers=sf_headers,
             )
             opp_records = opp_res.json().get("records", [])
             if opp_records:
-                record["opportunity_owner"] = (opp_records[0].get("Owner") or {}).get("Name", "")
+                opportunity = opp_records[0].get("Opportunity") or {}
+                record["opportunity_owner"] = (opportunity.get("Owner") or {}).get("Name", "")
 
             return sf_id, sf_url
 
