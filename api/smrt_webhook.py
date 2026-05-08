@@ -319,6 +319,9 @@ async def _score_with_claude(transcript: str) -> dict:
 async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None, None]:
     phone_from = record.get("call_from")
     phone_to = record.get("call_to")
+
+    logger.info(f"DEBUGGING: PHONE_TO: {phone_to}, RECORD: {record}")
+
     if not phone_to:
         return None, None
 
