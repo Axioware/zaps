@@ -7,6 +7,7 @@ import re
 import resend
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 import anthropic
 import gspread
 import httpx
@@ -575,7 +576,7 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
 
     a = analysis
     missed = "; ".join(a.get("missed_questions", []))
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S PST")
 
     row = [
         record.get("call_id", ""),           # Call ID
