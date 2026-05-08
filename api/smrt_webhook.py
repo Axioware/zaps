@@ -99,6 +99,8 @@ async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
     )
 
     logger.info("SMRT event=%s call_id=%s", event_type, call_id)
+    # log full payload at DEBUG level to see every field SMRT sends (helps map duration/call_link)
+    logger.debug("SMRT full payload call_id=%s: %s", call_id, json.dumps(payload))
 
     record = _get_or_create(call_id)
 
@@ -171,8 +173,10 @@ async def _run_pipeline(record: dict):
         analysis = await _score_with_claude(transcript)
 
         # use call_from (previously caller) for SF lead resolution
-        sf_lead_id = await _resolve_salesforce_lead(record)
+        # returns (sf_id, sf_record_url) so we can build a clickable link in Sheets
+        sf_lead_id, sf_record_url = await _resolve_salesforce_lead(record)
         if sf_lead_id:
+            record["record_id"] = sf_record_url  # store full URL for Sheets HYPERLINK formula
             await _post_to_salesforce_chatter(sf_lead_id, analysis, record)
         else:
             logger.warning("No Salesforce lead found for call_id=%s", call_id)
@@ -238,6 +242,8 @@ async def _get_transcript(record: dict) -> str | None:
         len(transcript),
         info.duration,
     )
+    # Extract and store actual call duration from audio file
+    record["duration"] = info.duration
     return transcript or None
 
 
@@ -310,38 +316,69 @@ async def _score_with_claude(transcript: str) -> dict:
         raise ValueError(f"Claude JSON parse error: {exc}") from exc
 
 
-async def _resolve_salesforce_lead(record: dict) -> str | None:
+async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None, None]:
     # use call_from (previously caller) for phone lookup
+    # returns (sf_record_id, sf_record_url) — URL is used to build a clickable Sheets HYPERLINK
+    # also populates lead_owner and opportunity_owner directly onto record from Salesforce
     phone = record.get("call_from") or record.get("call_to")
     if not phone:
-        return None
+        return None, None
 
     digits  = re.sub(r"\D", "", str(phone))
     last_10 = digits[-10:] if len(digits) >= 10 else digits
     if not last_10:
-        return None
+        return None, None
 
     access_token = await get_sf_access_token()
     sf_headers   = {"Authorization": f"Bearer {access_token}"}
     query_url    = f"{SF_INSTANCE_URL}/services/data/v57.0/query"
 
     async with get_client() as client:
+        # include Owner.Name so we get lead_owner in one query
         res = await safe_request(
             client, "GET", query_url,
-            params={"q": f"SELECT Id FROM Lead WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
+            params={"q": f"SELECT Id, Owner.Name FROM Lead WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
             headers=sf_headers,
         )
         records = res.json().get("records", [])
         if records:
-            return records[0]["Id"]
+            sf_id  = records[0]["Id"]
+            sf_url = f"{SF_INSTANCE_URL}/lightning/r/Lead/{sf_id}/view"
+            owner  = records[0].get("Owner") or {}
+            record["lead_owner"] = owner.get("Name", "")
+            # leads don't have a related Opportunity, so opportunity_owner stays blank
+            return sf_id, sf_url
 
+        # include Owner.Name and look up related Opportunity owner via Contact
         res = await safe_request(
             client, "GET", query_url,
-            params={"q": f"SELECT Id FROM Contact WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
+            params={"q": f"SELECT Id, Owner.Name FROM Contact WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
             headers=sf_headers,
         )
         records = res.json().get("records", [])
-        return records[0]["Id"] if records else None
+        if records:
+            sf_id        = records[0]["Id"]
+            sf_url       = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
+            contact_owner = (records[0].get("Owner") or {}).get("Name", "")
+            record["lead_owner"] = contact_owner
+
+            # fetch the most recent open Opportunity linked to this Contact for opportunity_owner
+            opp_res = await safe_request(
+                client, "GET", query_url,
+                params={"q": (
+                    f"SELECT Owner.Name FROM Opportunity "
+                    f"WHERE Id IN (SELECT OpportunityId FROM OpportunityContactRole WHERE ContactId = '{sf_id}') "
+                    f"ORDER BY CreatedDate DESC LIMIT 1"
+                )},
+                headers=sf_headers,
+            )
+            opp_records = opp_res.json().get("records", [])
+            if opp_records:
+                record["opportunity_owner"] = (opp_records[0].get("Owner") or {}).get("Name", "")
+
+            return sf_id, sf_url
+
+    return None, None
 
 
 def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
@@ -397,11 +434,6 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
         f"Offer Delivery            : {a.get('offer_delivery_score', 'N/A')}",
         f"Objection Handling (Dec)  : {a.get('objection_handling_declined_score', 'N/A')}",
         f"Urgency Anchor            : {a.get('urgency_anchor_score', 'N/A')}",
-        f"Personal Connector        : {a.get('personal_connector_score', 'N/A')}",
-        f"Call Recap                : {a.get('call_recap_score', 'N/A')}",
-        f"Timing & Urgency          : {a.get('timing_urgency_score', 'N/A')}",
-        f"New Personal Intel        : {a.get('new_personal_intel_score', 'N/A')}",
-        f"Next Follow Up Set        : {a.get('next_followup_set_score', 'N/A')}",
         "",
         "─── FEEDBACK & RECOMMENDATIONS ───",
         a.get("rep_feedback", ""),
@@ -523,22 +555,18 @@ _SHEET_HEADERS = [
     "Price Score",
     "Objection Score",
     "Next Step Score",
+    "Rapport & Connection Score (process call)",
     "Seller Motivation",
     "Seller Urgency",
     "Property Condition",
     "Expectation Setting Score",
-    "Rapport & Connection Score",
+    "Rapport & Connection Score (offer call)",
     "Offer Delivery Score",
     "Objection Handling Declined Score",
     "Urgency Anchor Score",
     "Clear Next Step Score",
     "Objection Boxing Result",
     "Incomplete Call Reason",
-    "Personal Connector Score",
-    "Call Recap Score",
-    "Timing & Urgency Score",
-    "New Personal Intel Score",
-    "Next Follow Up Set Score",
     "Call Summary",
     "Rep Feedback",
     "Rapport Connection Summary",
@@ -578,10 +606,25 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
     missed = "; ".join(a.get("missed_questions", []))
     now = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S PST")
 
+    raw_call_type = str(a.get("call_type", "") or "").strip().lower()
+    if "process_call" in raw_call_type:
+        call_type_category = "process"
+    elif "offer_call" in raw_call_type:
+        call_type_category = "offer"
+    elif "incomplete_call" in raw_call_type:
+        call_type_category = "incomplete"
+    else:
+        call_type_category = raw_call_type or "unknown"
+
+    call_link = record.get("audio_url") or record.get("call_link", "")
+    process_fields = call_type_category == "process"
+    offer_fields = call_type_category == "offer"
+
     row = [
         record.get("call_id", ""),           # Call ID
-        record.get("record_id", ""),          # Record ID (new)
-        record.get("call_link", ""),          # Call Link (new)
+        # HYPERLINK formula makes the cell a clickable link to the SF Lead/Contact record
+        f'=HYPERLINK("{record.get("record_id", "")}", "Open in Salesforce")' if record.get("record_id") else "",  # Record ID
+        call_link,                             # Call Link (SMRT recording URL)
         record.get("call_from", ""),          # Call From (renamed from caller)
         record.get("call_to", ""),            # Call To (new)
         record.get("lead_owner", ""),         # Lead Owner (new)
@@ -589,32 +632,28 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         a.get("call_type", ""),               # Call Type
         now,                                  # Timestamp
         record.get("duration", ""),           # Duration (new)
-        a.get("overall_score", ""),           # Overall Score
-        a.get("grade", ""),                   # Grade
-        a.get("opening_score"),               # Opening Score
-        a.get("going_deep_score"),            # Going Deep Score
-        a.get("motivation_score"),            # Motivation Score
-        a.get("urgency_score"),               # Urgency Score
-        a.get("condition_score"),             # Condition Score
-        a.get("price_score"),                 # Price Score
-        a.get("objection_score"),             # Objection Score
-        a.get("next_step_score"),             # Next Step Score
-        a.get("seller_motivation", ""),       # Seller Motivation
-        a.get("seller_urgency", ""),          # Seller Urgency
-        a.get("property_condition", ""),      # Property Condition
-        a.get("expectation_setting_score"),   # Expectation Setting Score
-        a.get("rapport_connection_score"),    # Rapport & Connection Score
-        a.get("offer_delivery_score"),        # Offer Delivery Score
-        a.get("objection_handling_declined_score"),  # Objection Handling Declined Score
-        a.get("urgency_anchor_score"),        # Urgency Anchor Score
-        a.get("clear_next_step_score"),       # Clear Next Step Score
-        a.get("objection_boxing_result", ""), # Objection Boxing Result
-        a.get("incomplete_call_reason", ""),  # Incomplete Call Reason
-        a.get("personal_connector_score"),    # Personal Connector Score
-        a.get("call_recap_score"),            # Call Recap Score
-        a.get("timing_urgency_score"),        # Timing & Urgency Score
-        a.get("new_personal_intel_score"),    # New Personal Intel Score
-        a.get("next_followup_set_score"),     # Next Follow Up Set Score
+        a.get("overall_score") if process_fields else "",           # Overall Score
+        a.get("grade") if process_fields else "",                   # Grade
+        a.get("opening_score") if process_fields else None,               # Opening Score
+        a.get("going_deep_score") if process_fields else None,            # Going Deep Score
+        a.get("motivation_score") if process_fields else None,            # Motivation Score
+        a.get("urgency_score") if process_fields else None,               # Urgency Score
+        a.get("condition_score") if process_fields else None,             # Condition Score
+        a.get("price_score") if process_fields else None,                 # Price Score
+        a.get("objection_score") if process_fields else None,             # Objection Score
+        a.get("next_step_score") if process_fields else None,             # Next Step Score
+        a.get("rapport_connection_score") if process_fields else None,    # Rapport & Connection Score (process call)
+        a.get("seller_motivation", "") if process_fields else "",       # Seller Motivation
+        a.get("seller_urgency", "") if process_fields else "",          # Seller Urgency
+        a.get("property_condition", "") if process_fields else "",      # Property Condition
+        a.get("expectation_setting_score") if offer_fields else None,   # Expectation Setting Score
+        a.get("rapport_connection_score") if offer_fields else None,    # Rapport & Connection Score (offer call)
+        a.get("offer_delivery_score") if offer_fields else None,        # Offer Delivery Score
+        a.get("objection_handling_declined_score") if offer_fields else None,  # Objection Handling Declined Score
+        a.get("urgency_anchor_score") if offer_fields else None,        # Urgency Anchor Score
+        a.get("clear_next_step_score") if offer_fields else None,       # Clear Next Step Score
+        a.get("objection_boxing_result", "") if offer_fields else "", # Objection Boxing Result
+        a.get("incomplete_call_reason", "") if call_type_category == "incomplete" else "",  # Incomplete Call Reason
         a.get("call_summary", ""),            # Call Summary
         a.get("rep_feedback", ""),            # Rep Feedback
         a.get("rapport_connection_summary", ""),  # Rapport Connection Summary
