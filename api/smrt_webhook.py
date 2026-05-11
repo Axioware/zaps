@@ -201,10 +201,14 @@ async def _get_transcript(record: dict) -> str | None:
         return None
 
     logger.info("Downloading audio for Whisper transcription: %s", audio_url)
-    async with httpx.AsyncClient(timeout=120) as http:
-        resp = await http.get(audio_url)
-        resp.raise_for_status()
-        audio_bytes = resp.content
+    try:
+        async with httpx.AsyncClient(timeout=120) as http:
+            resp = await http.get(audio_url)
+            resp.raise_for_status()
+            audio_bytes = resp.content
+    except httpx.HTTPStatusError as e:
+        logger.warning("Failed to download audio for call_id=%s: %s", record.get("call_id"), e)
+        return None
 
     audio_io = io.BytesIO(audio_bytes)
     url_lower = audio_url.lower()
@@ -493,6 +497,8 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
         lines += ["", " MISSED QUESTIONS "]
         lines += [f"• {q}" for q in missed]
 
+    # Filter out None values to prevent join errors
+    lines = [str(line) if line is not None else "" for line in lines]
     return "\n".join(lines)
 
 
