@@ -334,35 +334,61 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
     if not last_10:
         return None, None
 
+    # Build multiple phone format variations to match however SF stores it
+    area    = last_10[0:3]
+    prefix  = last_10[3:6]
+    line    = last_10[6:10]
+    phone_variants = [
+        last_10,                        # 3105614025
+        f"+1{last_10}",                 # +13105614025
+        f"1{last_10}",                  # 13105614025
+        f"({area}) {prefix}-{line}",    # (310) 561-4025  ← THIS is what SF stores
+        f"{area}-{prefix}-{line}",      # 310-561-4025
+        f"{area}.{prefix}.{line}",      # 310.561.4025
+        f"{area} {prefix} {line}",      # 310 561 4025
+    ]
+
+    def build_phone_conditions(field: str) -> str:
+        return " OR ".join(f"{field} LIKE '%{v}%'" for v in phone_variants)
+
+    logger.info("Searching SF with last_10=%s, variants=%s", last_10, phone_variants)
+
     access_token = await get_sf_access_token()
     sf_headers   = {"Authorization": f"Bearer {access_token}"}
     query_url    = f"{SF_INSTANCE_URL}/services/data/v57.0/query"
 
     async with get_client() as client:
 
-        #  1. Lead lookup 
+        # 1. Lead lookup
+        lead_conditions = build_phone_conditions("Phone")
         res = await safe_request(
             client, "GET", query_url,
-            params={"q": f"SELECT Id, Owner.Name FROM Lead WHERE Phone LIKE '%{last_10}%' AND IsConverted = false LIMIT 1"},
+            params={"q": (
+                f"SELECT Id, Owner.Name FROM Lead "
+                f"WHERE ({lead_conditions}) AND IsConverted = false LIMIT 1"
+            )},
             headers=sf_headers,
         )
         records = res.json().get("records", [])
         if records:
             sf_id  = records[0]["Id"]
             sf_url = f"{SF_INSTANCE_URL}/lightning/r/Lead/{sf_id}/view"
-            logger.info(sf_url)
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
             logger.info("Lead found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["lead_owner"])
             return sf_id, sf_url
 
-        #  2. Opportunity direct phone lookup 
+        # 2. Opportunity lookup via Account phone fields (all variants, all phone fields)
+        opp_conditions = " OR ".join([
+            build_phone_conditions("Account.Phone"),
+            build_phone_conditions("Account.PersonMobilePhone"),
+            build_phone_conditions("Account.PersonHomePhone"),
+        ])
         res = await safe_request(
             client, "GET", query_url,
             params={"q": (
-                f"SELECT Id, Name, Owner.Name, Account.Phone, Account.PersonMobilePhone "
+                f"SELECT Id, Name, Owner.Name, Account.Phone, Account.PersonMobilePhone, Account.PersonHomePhone "
                 f"FROM Opportunity "
-                f"WHERE Account.Phone LIKE '%{last_10}%' "
-                f"   OR Account.PersonMobilePhone LIKE '%{last_10}%' "
+                f"WHERE ({opp_conditions}) "
                 f"ORDER BY CloseDate DESC NULLS LAST, CreatedDate DESC "
                 f"LIMIT 1"
             )},
@@ -371,25 +397,31 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
         opp_records = res.json().get("records", [])
         logger.info("opp_records for phone %s: %s", phone_to, opp_records)
         if opp_records:
-            opp        = opp_records[0]
-            sf_id      = opp["Id"]
-            sf_url     = f"{SF_INSTANCE_URL}/lightning/r/Opportunity/{sf_id}/view"
-            owner = opp.get("Owner", {}).get("Name", "")
-            record["opportunity_owner"] = owner
-            logger.info("Opportunity found for phone %s: ID=%s, Name=%s, Owner=%s", phone_to, sf_id, opp.get("Name", ""), record["opportunity_owner"])
-            # lead_owner stays blank — this is a pure Opportunity record
+            opp   = opp_records[0]
+            sf_id = opp["Id"]
+            sf_url = f"{SF_INSTANCE_URL}/lightning/r/Opportunity/{sf_id}/view"
+            record["opportunity_owner"] = (opp.get("Owner") or {}).get("Name", "")
+            logger.info("Opportunity found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["opportunity_owner"])
             return sf_id, sf_url
 
-        #  3. Contact lookup (fallback) 
+        # 3. Contact lookup (all variants)
+        contact_conditions = " OR ".join([
+            build_phone_conditions("Phone"),
+            build_phone_conditions("MobilePhone"),
+            build_phone_conditions("HomePhone"),
+        ])
         res = await safe_request(
             client, "GET", query_url,
-            params={"q": f"SELECT Id, Owner.Name FROM Contact WHERE Phone LIKE '%{last_10}%' LIMIT 1"},
+            params={"q": (
+                f"SELECT Id, Owner.Name FROM Contact "
+                f"WHERE ({contact_conditions}) LIMIT 1"
+            )},
             headers=sf_headers,
         )
         records = res.json().get("records", [])
         if records:
-            sf_id         = records[0]["Id"]
-            sf_url        = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
+            sf_id  = records[0]["Id"]
+            sf_url = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
             logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["lead_owner"])
 
@@ -409,9 +441,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             if opp_records:
                 opportunity = opp_records[0].get("Opportunity") or {}
                 record["opportunity_owner"] = (opportunity.get("Owner") or {}).get("Name", "")
-                logger.info("Linked Opportunity found for Contact %s: Opportunity ID=%s, Owner=%s", sf_id, opportunity.get("Id", ""), record["opportunity_owner"])
-            else:
-                logger.info("No linked Opportunity found for Contact %s", sf_id)
+                logger.info("Linked Opportunity for Contact %s: ID=%s, Owner=%s", sf_id, opportunity.get("Id", ""), record["opportunity_owner"])
 
             return sf_id, sf_url
 
