@@ -15,6 +15,7 @@ from core.security import verify_admin
 from api.sheets import router as SheetsRouter
 from api.smrt_webhook import router as smrt_router
 from api.prompts import router as PromptsRouter
+from api.agent_memory_webhook import router as AgentMemoryRouter
 from fastapi.middleware.cors import CORSMiddleware
 from core.celery_app import run_scheduler
 
@@ -65,7 +66,7 @@ app.include_router(SheetsstatsRouter,prefix="/api",             tags=["Sheet Sta
 app.include_router(CallAnalyticsRouter, prefix="/api",          tags=["Analytics"])
 app.include_router(smrt_router)
 app.include_router(PromptsRouter,    prefix="/api",             tags=["Prompts"])
-
+app.include_router(AgentMemoryRouter, prefix="/api/agent-memory", tags=["Agent Memory"])
 @app.get("/test-scheduler")
 def test_scheduler():
     run_scheduler.delay()
