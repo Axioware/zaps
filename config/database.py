@@ -221,13 +221,13 @@ def init_db():
         """)
 
         conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_call_logs_conversation_id
-        ON call_logs(conversation_id)
+        ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS
+        lead_score TEXT
         """)
 
         conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_call_logs_lead_id
-        ON call_logs(lead_id)
+        CREATE INDEX IF NOT EXISTS idx_call_logs_conversation_id
+        ON call_logs(conversation_id)
         """)
 
         conn.commit()
