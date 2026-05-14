@@ -132,6 +132,7 @@ def _build_data_map(
         "Next Steps":             _safe(analysis.get("next_steps")            if analysis else ""),
         "Change of Mind Reason":  _safe(analysis.get("change_of_mind_reason") if analysis else ""),
         "Checkback Time":         _safe(analysis.get("checkback_time")        if analysis else ""),
+        "lead_score":             _safe(analysis.get("lead_score")            if analysis else ""),
         "Called From":            _safe(called_from),
         "Called To":              _safe(called_to),
         "Call Duration":          f"{duration}s",

@@ -448,6 +448,7 @@ async def sf_post_call(request: Request):
             "next_steps":            get_field("next_steps"),
             "change_of_mind_reason": get_field("change_of_mind_reason"),
             "checkback_time":        get_field("checkback_time"),
+            "lead_score":            get_field("lead_score"),
             "call_interrupted":      call_interrupted,
             "frustrated_with_ai":    frustrated_with_ai,
             "voicemail_detected":    voicemail_detected,

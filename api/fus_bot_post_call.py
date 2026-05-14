@@ -95,6 +95,7 @@ async def handle_post_call(request: Request):
             analysis = {
                 "call_back_time": data_collection.get("call_back_time", {}).get("value"),
                 "wrong_call": data_collection.get("wrong_call", {}).get("value"),
+                "lead_score": data_collection.get("lead_score", {}).get("value"),
                 "call_transferred": str(
                     payload.get("metadata", {})
                     .get("features_usage", {})
@@ -123,7 +124,8 @@ async def handle_post_call(request: Request):
                 call_status=call_status,
                 transcript=transcript_str, 
                 wrong_call=analysis.get("wrong_call"),
-                transfer_used=analysis.get("call_transferred")
+                transfer_used=analysis.get("call_transferred"),
+                lead_score=analysis.get("lead_score")
             )
 
         return {"status": "success", "duration": duration}

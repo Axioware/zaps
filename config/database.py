@@ -209,6 +209,7 @@ def init_db():
             callback_time TEXT,
             transfer_used TEXT,
             transcript TEXT,
+            lead_score TEXT,
             voicemail_retry_count INTEGER DEFAULT 0,
             updated_at TIMESTAMP
         )
@@ -222,6 +223,11 @@ def init_db():
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_call_logs_conversation_id
         ON call_logs(conversation_id)
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_call_logs_lead_id
+        ON call_logs(lead_id)
         """)
 
         conn.commit()
@@ -298,7 +304,7 @@ def create_call_log(conversation_id: str, to_number: str, from_number: str = Non
 def update_call_log(conversation_id: str, call_disposition: str = None, duration_secs: int = None,
                     call_status: str = None, wrong_call: str = None, wants_to_sell: str = None,
                     callback_time: str = None, transfer_used: str = None, transcript: str = None,
-                    timestamp_str: str = None):
+                    timestamp_str: str = None, lead_score: str = None):
     try:
         if timestamp_str is None:
             karachi_tz = pytz.timezone("Asia/Karachi")
@@ -315,11 +321,12 @@ def update_call_log(conversation_id: str, call_disposition: str = None, duration
                    callback_time    = COALESCE(%s, callback_time),
                    transfer_used    = COALESCE(%s, transfer_used),
                    transcript       = COALESCE(%s, transcript),
-                   updated_at       = %s
+                   updated_at       = %s,
+                   lead_score       = COALESCE(%s, lead_score)
                    WHERE conversation_id = %s""",
                 (call_disposition, duration_secs, call_status, wrong_call,
                  wants_to_sell, callback_time, transfer_used, transcript,
-                 timestamp_str, conversation_id)
+                 timestamp_str, lead_score, conversation_id)
             )
             conn.commit()
             logger.info(f"Call log updated: {conversation_id}")

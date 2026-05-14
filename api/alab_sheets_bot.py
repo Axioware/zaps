@@ -297,6 +297,7 @@ async def post_call_update(request: Request):
         sheet.update(f"Q{row_id}", [[analysis.get("call_back_time", {}).get("value")]])
         sheet.update(f"R{row_id}", [[str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used"))]])
         sheet.update(f"T{row_id}", [[metadata.get("call_duration_secs")]])
+        sheet.update(f"U{row_id}", [[analysis.get("lead_score", {}).get("value")]])
 
         logger.info(f"Post-call updated row {row_id} | disposition={disposition}")
 
@@ -310,6 +311,7 @@ async def post_call_update(request: Request):
                 wrong_call       = str(analysis.get("wrong_call", {}).get("value", "") or ""),
                 wants_to_sell    = str(analysis.get("Do they want to sell?", {}).get("value", "") or ""),
                 callback_time    = str(analysis.get("call_back_time", {}).get("value", "") or ""),
+                lead_score       = str(analysis.get("lead_score", {}).get("value", "") or ""),
                 transfer_used    = str(metadata.get("features_usage", {}).get("transfer_to_number", {}).get("used", "") or ""),
             )
 
