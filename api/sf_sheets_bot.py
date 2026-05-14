@@ -493,6 +493,36 @@ async def sf_post_call(request: Request):
             if log:
                 called_to = log.get("to_number", "")
 
+        # ── LEAD SCORE DEBUG: trace exactly what the payload returned ──────────
+        raw_lead_score_dc = (
+            payload.get("analysis", {})
+                   .get("data_collection_results", {})
+                   .get("lead_score", {})
+        )
+        raw_lead_score_sd = (
+            payload.get("analysis", {})
+                   .get("structured_data", {})
+                   .get("lead_score")
+        )
+        logger.info(
+            f"[LEAD_SCORE DEBUG] conv_id={conv_id} | lead_id={lead_id} | "
+            f"data_collection_results['lead_score'] raw block = {raw_lead_score_dc} | "
+            f"structured_data['lead_score'] = {raw_lead_score_sd} | "
+            f"resolved analysis['lead_score'] = {analysis.get('lead_score')!r}"
+        )
+        # ── END LEAD SCORE DEBUG ────────────────────────────────────────────────
+
+        # ── FULL SHEET-UPDATE PAYLOAD LOG ───────────────────────────────────────
+        logger.info(
+            f"[SHEET UPDATE] conv_id={conv_id} | lead_id={lead_id} | "
+            f"sheet_url={postcall_sheet_url!r} | worksheet={postcall_worksheet_name!r} | "
+            f"called_from={called_from!r} | called_to={called_to!r} | "
+            f"duration={duration} | call_count={call_count} | "
+            f"call_disposition={call_disposition!r} | voicemail_detected={voicemail_detected} | "
+            f"analysis={analysis}"
+        )
+        # ── END SHEET-UPDATE PAYLOAD LOG ────────────────────────────────────────
+
         if postcall_sheet_url and postcall_worksheet_name and called_to:
             await asyncio.to_thread(
                 update_sheet_row,
