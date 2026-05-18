@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 import anthropic
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from config.config import ANTHROPIC_API_KEY
@@ -16,24 +16,11 @@ from config.database import (
     get_connection,
     CONVERSATION_HISTORY_LIMIT,
 )
+from core.security import verify_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Conversation"])
-
-# ---------------------------------------------------------------------------
-# Admin auth — simple passcode guard for destructive operations
-# ---------------------------------------------------------------------------
-_ADMIN_PASSCODE = "12345678"
-
-
-def verify_admin(x_admin_passcode: str = Header(..., alias="X-Admin-Passcode")) -> None:
-    """
-    FastAPI dependency that checks the X-Admin-Passcode header.
-    Raises 403 if the passcode is wrong or missing.
-    """
-    if x_admin_passcode != _ADMIN_PASSCODE:
-        raise HTTPException(status_code=403, detail="Invalid admin passcode")
 
 
 # ---------------------------------------------------------------------------
