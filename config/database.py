@@ -13,6 +13,12 @@ los_angeles_time = datetime.now(los_angeles_tz)
 timestamp_str = los_angeles_time.strftime("%Y-%m-%d %H:%M:%S PDT")
 
 
+# ---------------------------------------------------------------------------
+# Conversation history — how many recent messages to send to Claude as context
+# ---------------------------------------------------------------------------
+CONVERSATION_HISTORY_LIMIT = 50
+
+
 class _PGConn:
     """Thin wrapper so callers can use conn.execute() like sqlite3."""
 
@@ -230,9 +236,141 @@ def init_db():
         ON call_logs(conversation_id)
         """)
 
+        # ----------------------------------------------------------------
+        #  CONVERSATION MESSAGES
+        #  Stores the persistent Blake ↔ Claude conversation history.
+        #  message_from: 'user' (Blake) | 'assistant' (Claude) | 'system'
+        # ----------------------------------------------------------------
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id           SERIAL PRIMARY KEY,
+            message_from TEXT      NOT NULL,
+            message      TEXT      NOT NULL,
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conversation_messages_id
+        ON conversation_messages(id)
+        """)
+
         conn.commit()
         logger.info("Database initialized")
 
+
+# ---------------------------------------------------------------------------
+# Conversation message helpers
+# ---------------------------------------------------------------------------
+
+def add_conversation_message(message_from: str, message: str) -> int:
+    """
+    Insert a new conversation message row.
+
+    Args:
+        message_from: 'user' | 'assistant' | 'system'
+        message:      The message text.
+
+    Returns:
+        The newly created row id.
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO conversation_messages (message_from, message)
+                VALUES (%s, %s)
+                RETURNING id
+                """,
+                (message_from, message),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            new_id = row["id"]
+            logger.info("Conversation message added: id=%s from=%s", new_id, message_from)
+            return new_id
+    except Exception as e:
+        logger.error("Error adding conversation message: %s", e)
+        raise
+
+
+def get_all_conversation_messages() -> list[dict]:
+    """
+    Return every row in conversation_messages ordered oldest → newest.
+
+    Returns:
+        List of dicts with keys: id, message_from, message, created_at
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.execute(
+                "SELECT id, message_from, message, created_at FROM conversation_messages ORDER BY id ASC"
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error("Error fetching all conversation messages: %s", e)
+        raise
+
+
+def get_recent_conversation_messages(limit: int = CONVERSATION_HISTORY_LIMIT) -> list[dict]:
+    """
+    Return the most recent `limit` messages ordered oldest → newest
+    (so they can be fed directly into the Claude messages array in order).
+
+    Args:
+        limit: Maximum number of messages to return. Defaults to
+               CONVERSATION_HISTORY_LIMIT (50).
+
+    Returns:
+        List of dicts with keys: id, message_from, message, created_at
+    """
+    try:
+        with get_connection() as conn:
+            # Fetch last N rows descending, then re-order ascending so
+            # the caller always receives them in chronological order.
+            cur = conn.execute(
+                """
+                SELECT id, message_from, message, created_at
+                FROM (
+                    SELECT id, message_from, message, created_at
+                    FROM conversation_messages
+                    ORDER BY id DESC
+                    LIMIT %s
+                ) sub
+                ORDER BY id ASC
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error("Error fetching recent conversation messages: %s", e)
+        raise
+
+
+def clear_conversation_messages() -> int:
+    """
+    Delete all rows from conversation_messages.
+
+    Returns:
+        Number of rows deleted.
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("DELETE FROM conversation_messages")
+            count = cur.rowcount
+            conn.commit()
+            logger.info("Conversation history cleared: %d rows deleted", count)
+            return count
+    except Exception as e:
+        logger.error("Error clearing conversation messages: %s", e)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Existing helpers (unchanged)
+# ---------------------------------------------------------------------------
 
 _row_limit_cache: dict = {"value": None, "expires_at": 0.0}
 _ROW_LIMIT_TTL = 60  # seconds

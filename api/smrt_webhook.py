@@ -16,7 +16,12 @@ from faster_whisper import WhisperModel
 from google.oauth2.service_account import Credentials
 from clients.client import get_client
 from config.config import SF_INSTANCE_URL
-from config.database import get_connection
+from config.database import (
+    get_connection,
+    add_conversation_message,
+    get_recent_conversation_messages,
+    CONVERSATION_HISTORY_LIMIT,
+)
 from services.salesforce_service import get_sf_access_token
 from utils.retry import safe_request
 from config.config import ANTHROPIC_API_KEY
@@ -287,31 +292,89 @@ def _load_active_system_prompt() -> str:
     return "insert prompt here"
 
 
+def _normalise_messages(messages: list[dict]) -> list[dict]:
+    """
+    Anthropic requires strict user/assistant alternation.
+    Merge consecutive same-role messages by joining their content
+    with a newline so the list is always alternating.
+    """
+    if not messages:
+        return []
+
+    normalised: list[dict] = []
+    for msg in messages:
+        if normalised and normalised[-1]["role"] == msg["role"]:
+            # Merge into the previous message
+            normalised[-1]["content"] += "\n\n" + msg["content"]
+        else:
+            normalised.append({"role": msg["role"], "content": msg["content"]})
+
+    return normalised
+
+
 async def _score_with_claude(transcript: str) -> dict:
+    """
+    Score a call transcript using Claude.
+
+    Flow:
+      1. Load active system prompt from DB.
+      2. Fetch recent conversation history (last CONVERSATION_HISTORY_LIMIT messages).
+      3. Build the messages array: history + new user turn (transcript scoring request).
+      4. Call Claude.
+      5. Persist the new user turn and Claude's reply to conversation_messages.
+      6. Parse and return the JSON analysis.
+    """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     system_prompt = _load_active_system_prompt()
 
-    prompt = (
+    current_prompt = (
         "Please score this call transcript and return ONLY valid JSON using the schema defined in the system prompt. "
         "Do not include any commentary, markdown fences, or extra text. "
         "If you cannot supply valid JSON, return an empty JSON object {}.\n\n"
         f"Transcript:\n\n{transcript}"
     )
 
+    # ------------------------------------------------------------------
+    # Build messages array from persistent conversation history
+    # ------------------------------------------------------------------
+    history = get_recent_conversation_messages()  # uses CONVERSATION_HISTORY_LIMIT (50)
+
+    messages: list[dict] = []
+    for row in history:
+        role = "user" if row["message_from"] in ("user", "system") else "assistant"
+        messages.append({"role": role, "content": row["message"]})
+
+    # Append the current transcript as the new user turn
+    messages.append({"role": "user", "content": current_prompt})
+
+    # Ensure strict user/assistant alternation required by Anthropic API
+    messages = _normalise_messages(messages)
+
+    # ------------------------------------------------------------------
+    # Call Claude
+    # ------------------------------------------------------------------
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2048,
         system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        messages=messages,
     )
 
     raw = (message.content[0].text or "").strip()
 
+    # ------------------------------------------------------------------
+    # Persist both turns to conversation history
+    # ------------------------------------------------------------------
+    try:
+        add_conversation_message("user", current_prompt)
+        add_conversation_message("assistant", raw)
+    except Exception as exc:
+        # Non-fatal — log but don't abort the scoring pipeline
+        logger.error("Failed to persist conversation messages: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Parse JSON response
+    # ------------------------------------------------------------------
     try:
         json_text = _extract_json_text(raw)
         return json.loads(json_text)
