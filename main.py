@@ -2,6 +2,8 @@ import logging, time
 from fastapi import FastAPI, Header, Depends, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+
 from core.rate_limiter import rate_limiter
 from config.database import init_db, get_row_limit, update_row_limit
 from api.fus_bot_new_lead import Router as LeadRouter
@@ -17,7 +19,6 @@ from api.smrt_webhook import router as smrt_router
 from api.prompts import router as PromptsRouter
 from api.agent_memory_webhook import router as AgentMemoryRouter
 from api.conversation import router as ConversationRouter
-from fastapi.middleware.cors import CORSMiddleware
 from core.celery_app import run_scheduler
 
 
@@ -28,47 +29,49 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 app = FastAPI(title="Lead Automation System")
+
+# ── CORS must be added first, before any other middleware ─────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["http://localhost:5173"]
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Request logging middleware ────────────────────────────────────────────────
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    duration = round(time.time() - start_time, 3)
+    logger.info(f"{request.method} {request.url} - {duration}s")
+    return response
+
+
 @app.on_event("startup")
 def startup_event():
     init_db()
     logger.info("Database initialized.")
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    start_time = time.time()
-    
-    response = await call_next(request)
-    
-    duration = round(time.time() - start_time, 3)
-    logger.info(f"{request.method} {request.url} - {duration}s")
-    
-    return response
 
 
 class ConfigUpdate(BaseModel):
     num_rows: int
 
 
-#  Routers
-app.include_router(LeadRouter,       prefix="/api/leads",       tags=["Lead Processing"])
-app.include_router(CallEndRouter,    prefix="/api/callback",    tags=["Call Analysis"])
-app.include_router(PostCallRouter,   prefix="/api/postcall",    tags=["Post-Call Logging"])
-app.include_router(AlabSheetsRouter, prefix="/api/alab-sheets", tags=["ALab Sheets Bot"])
-app.include_router(SFSheetsRouter,   prefix="/api/sf-sheets",   tags=["SF Sheets Bot"])
-app.include_router(SheetsRouter,     prefix="/api",             tags=["Sheets"])
-app.include_router(SheetsstatsRouter,prefix="/api",             tags=["Sheet Stats"])
-app.include_router(CallAnalyticsRouter, prefix="/api",          tags=["Analytics"])
+# ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(LeadRouter,          prefix="/api/leads",        tags=["Lead Processing"])
+app.include_router(CallEndRouter,       prefix="/api/callback",     tags=["Call Analysis"])
+app.include_router(PostCallRouter,      prefix="/api/postcall",     tags=["Post-Call Logging"])
+app.include_router(AlabSheetsRouter,    prefix="/api/alab-sheets",  tags=["ALab Sheets Bot"])
+app.include_router(SFSheetsRouter,      prefix="/api/sf-sheets",    tags=["SF Sheets Bot"])
+app.include_router(SheetsRouter,        prefix="/api",              tags=["Sheets"])
+app.include_router(SheetsstatsRouter,   prefix="/api",              tags=["Sheet Stats"])
+app.include_router(CallAnalyticsRouter, prefix="/api",              tags=["Analytics"])
 app.include_router(smrt_router)
-app.include_router(PromptsRouter,    prefix="/api",             tags=["Prompts"])
-app.include_router(AgentMemoryRouter, prefix="/api/agent-memory", tags=["Agent Memory"])
-app.include_router(ConversationRouter, prefix="/api", tags=["Conversation"])
+app.include_router(PromptsRouter,       prefix="/api",              tags=["Prompts"])
+app.include_router(AgentMemoryRouter,   prefix="/api/agent-memory", tags=["Agent Memory"])
+app.include_router(ConversationRouter,  prefix="/api",              tags=["Conversation"])
 
 @app.get("/test-scheduler")
 def test_scheduler():
@@ -88,7 +91,7 @@ async def update_config(data: ConfigUpdate, _: str = Depends(verify_admin)):
 @app.get("/", response_class=HTMLResponse)
 async def simple_ui():
     current_limit = get_row_limit()
-    
+
     return f"""
     <!DOCTYPE html>
     <html lang="en">
