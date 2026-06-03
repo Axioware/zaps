@@ -303,9 +303,13 @@ async def sf_post_call(request: Request):
 
         if conv_id:
             log = get_call_log(conv_id)
+            print(f"[SHEET DEBUG] conv_id={conv_id} | call_log found={log is not None} | log={log}")
             if log:
                 called_from = log.get("from_number") or DEFAULT_PHONE
                 sheet_id    = log.get("sheet_id")
+            print(f"[SHEET DEBUG] sheet_id={sheet_id} | called_from={called_from}")
+        else:
+            print(f"[SHEET DEBUG] conv_id is empty — cannot look up call_log")
 
         if sheet_id:
             with get_connection() as conn:
@@ -315,11 +319,14 @@ async def sf_post_call(request: Request):
                        FROM sheets WHERE id=%s""",
                     (sheet_id,),
                 ).fetchone()
+                print(f"[SHEET DEBUG] sheets row for sheet_id={sheet_id}: {dict(job_row) if job_row else None}")
                 if job_row:
                     postcall_sheet_url      = job_row.get("postcall_sheet_url")
                     postcall_worksheet_name = job_row.get("postcall_worksheet_name")
                     agent_id                = job_row.get("agent_id")
                     retries_on_voicemail    = job_row.get("retries_on_voicemail") or 0
+        else:
+            print(f"[SHEET DEBUG] sheet_id is None — skipping sheet config lookup")
 
         #  DETERMINE CALL DISPOSITION + RETRY LOGIC 
         if duration <= 0:
@@ -421,20 +428,28 @@ async def sf_post_call(request: Request):
 
         #  ANALYSIS FIELDS 
         def get_field(key):
-            return (
+            dc_val = (
                 payload.get("analysis", {})
                        .get("data_collection_results", {})
                        .get(key, {})
                        .get("value")
-                or payload.get("analysis", {})
-                          .get("structured_data", {})
-                          .get(key)
-                or None
+            )
+            if dc_val is not None:
+                return dc_val
+            return (
+                payload.get("analysis", {})
+                       .get("structured_data", {})
+                       .get(key)
             )
 
         evaluation_results = payload.get("analysis", {}).get("evaluation_criteria_results", {})
         call_interrupted   = evaluation_results.get("call_interupted", {}).get("result", "")
         frustrated_with_ai = evaluation_results.get("frustrated_with_ai", {}).get("result", "")
+        transcript_summary = payload.get("analysis", {}).get("transcript_summary", "")
+
+        print(f"[DEBUG] transcript_summary = {transcript_summary!r}")
+        print(f"[DEBUG] raw lead_score (data_collection) = {payload.get('analysis', {}).get('data_collection_results', {}).get('lead_score', {})!r}")
+        print(f"[DEBUG] raw lead_score (structured_data) = {payload.get('analysis', {}).get('structured_data', {}).get('lead_score')!r}")
 
         analysis = {
             "is_looking_to_sell":    get_field("Are they looking to sell?"),
@@ -449,6 +464,14 @@ async def sf_post_call(request: Request):
             "change_of_mind_reason": get_field("change_of_mind_reason"),
             "checkback_time":        get_field("checkback_time"),
             "lead_score":            get_field("lead_score"),
+            "wrong_call":            get_field("wrong_call"),
+            "call_transferred":      str(
+                payload.get("metadata", {})
+                       .get("features_usage", {})
+                       .get("transfer_to_number", {})
+                       .get("used")
+            ),
+            "call_summary":          transcript_summary,
             "call_interrupted":      call_interrupted,
             "frustrated_with_ai":    frustrated_with_ai,
             "voicemail_detected":    voicemail_detected,
@@ -476,7 +499,7 @@ async def sf_post_call(request: Request):
             get_res   = await client.get(update_url, headers=sf_headers)
             lead_info = get_res.json()
 
-        #  UPDATE CALL LOG 
+        #  UPDATE CALL LOG
         if conv_id:
             update_call_log(
                 conversation_id  = conv_id,
@@ -484,6 +507,9 @@ async def sf_post_call(request: Request):
                 duration_secs    = duration,
                 call_status      = call_status,
                 transcript       = transcript_str,
+                wrong_call       = str(analysis.get("wrong_call")) if analysis.get("wrong_call") is not None else None,
+                transfer_used    = analysis.get("call_transferred"),
+                lead_score       = str(analysis.get("lead_score")) if analysis.get("lead_score") is not None else None,
             )
 
         #  UPDATE GOOGLE SHEET ROW 
@@ -523,6 +549,8 @@ async def sf_post_call(request: Request):
         )
         # ── END SHEET-UPDATE PAYLOAD LOG ────────────────────────────────────────
 
+        print(f"[SHEET DEBUG] Final check — postcall_sheet_url={postcall_sheet_url!r} | postcall_worksheet_name={postcall_worksheet_name!r} | called_to={called_to!r}")
+
         if postcall_sheet_url and postcall_worksheet_name and called_to:
             await asyncio.to_thread(
                 update_sheet_row,
@@ -553,3 +581,59 @@ async def sf_post_call(request: Request):
     except Exception as e:
         logger.error(f"SF post-call error: {e}", exc_info=True)
         return {"status": "error", "message": "Internal error"}
+
+
+#  CALL-END WEBHOOK (mid-call SF update for FUS agent)
+
+_SF_CALL_END_FIELDS = {
+    "reason":     "Change_of_Mind_Reason__c",
+    "interested": "Is_Interested_in_Selling__c",
+    "callback":   "Check_Back_Time__c",
+}
+
+@Router.post("/sf-call-end")
+async def sf_call_end(request: Request):
+    try:
+        data = await request.json()
+        logger.info(f"SF call-end webhook received: {data}")
+
+        if not isinstance(data, dict):
+            return {"status": "error", "message": "Invalid payload"}
+
+        params    = data.get("parameters", {})
+        variables = (
+            data.get("conversation_initiation_client_data", {})
+                .get("dynamic_variables", {})
+        )
+
+        lead_id = variables.get("lead_id") or data.get("lead_id")
+        if not lead_id:
+            logger.error("SF call-end: missing lead_id")
+            return {"status": "error", "message": "Missing lead_id"}
+
+        reason     = str(params.get("what_changed", "No reason provided"))[:255]
+        interested = str(params.get("is_interested", "Unknown"))[:50]
+        callback   = str(params.get("callback_time", ""))[:50]
+
+        sf_payload = {
+            _SF_CALL_END_FIELDS["reason"]:     reason,
+            _SF_CALL_END_FIELDS["interested"]: interested,
+            _SF_CALL_END_FIELDS["callback"]:   callback,
+        }
+
+        access_token = await get_sf_access_token()
+        sf_headers   = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type":  "application/json",
+        }
+        update_url = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/Lead/{lead_id}"
+
+        async with get_client() as client:
+            await safe_request(client, "PATCH", update_url, json=sf_payload, headers=sf_headers)
+
+        logger.info(f"SF call-end: lead {lead_id} updated successfully")
+        return {"status": "success"}
+
+    except Exception as e:
+        logger.error(f"SF call-end error: {e}", exc_info=True)
+        return {"status": "error", "message": "Internal server error"}

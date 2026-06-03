@@ -133,6 +133,9 @@ def _build_data_map(
         "Change of Mind Reason":  _safe(analysis.get("change_of_mind_reason") if analysis else ""),
         "Checkback Time":         _safe(analysis.get("checkback_time")        if analysis else ""),
         "lead_score":             _safe(analysis.get("lead_score")            if analysis else ""),
+        "Wrong / DNC":            _safe(analysis.get("wrong_call")            if analysis else ""),
+        "Was it Transferred":     _safe(analysis.get("call_transferred")      if analysis else ""),
+        "call summary":           _safe(analysis.get("call_summary")          if analysis else ""),
         "Called From":            _safe(called_from),
         "Called To":              _safe(called_to),
         "Call Duration":          f"{duration}s",
@@ -242,7 +245,11 @@ def update_sheet_row(
             disposition, timestamp_str,
         )
 
-        #  Find the row whose "Called To" matches this call 
+        print(f"[SHEET HEADERS] {headers}")
+        print(f"[DATA MAP KEYS] {list(data_map.keys())}")
+        print(f"[DATA MAP VALUES] wrong/dnc={data_map.get('Wrong / DNC')!r} | lead_score={data_map.get('lead_score')!r} | call_summary={data_map.get('Call Summary')!r}")
+
+        #  Find the row whose "Called To" matches this call
         called_to_digits = re.sub(r"\D", "", called_to)
 
         try:
