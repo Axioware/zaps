@@ -679,7 +679,7 @@ _SHEET_HEADERS = [
     "Timestamp",
     "Duration",
     "Overall Score",
-    "Grade",
+    "Lead Score",
     "Opening Score",
     "Going Deep Score",
     "Motivation Score",
@@ -708,6 +708,7 @@ _SHEET_HEADERS = [
     "Coaching Summary For Slack",
     "Missed Questions",
     "Call Transcript",
+    "Lead Score Explanation",
 ]
 
 
@@ -766,7 +767,7 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         now,                                  # Timestamp
         record.get("duration", ""),           # Duration (new)
         a.get("overall_score") if process_fields else "",           # Overall Score
-        a.get("grade") if process_fields else "",                   # Grade
+        a.get("lead_score") if process_fields else "",                   # Lead Score
         a.get("opening_score") if process_fields else None,               # Opening Score
         a.get("going_deep_score") if process_fields else None,            # Going Deep Score
         a.get("motivation_score") if process_fields else None,            # Motivation Score
@@ -795,7 +796,9 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         a.get("coaching_summary_for_slack", ""),  # Coaching Summary For Slack
         missed,                               # Missed Questions
         transcript,                           # Call Transcript
+        a.get("lead_score_explanation", "") if process_fields else "",  # Lead Score Explanation
     ]
+    print(f"DEBUGGING: APPENDING ROW: {row}")
 
     ws.append_row(row, value_input_option="USER_ENTERED")
 
