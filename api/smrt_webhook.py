@@ -524,27 +524,36 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
     ]
 
     if record:
-        user_name    = record.get("user_name", "N/A")
-        contact_name = record.get("contact_name", "N/A")
-        timestamp    = record.get("timestamp", "N/A")
-        # updated to use call_from/call_to and include new fields
-        call_from    = record.get("call_from", "N/A")
-        call_to      = record.get("call_to", "N/A")
-        lead_owner   = record.get("lead_owner", "N/A")
-        opp_owner    = record.get("opportunity_owner", "N/A")
-        duration     = record.get("duration", "N/A")
-        lines.extend([
+        raw_call_type = str(a.get("call_type", "") or "").strip().lower()
+        is_process_or_offer = "process_call" in raw_call_type or "offer_call" in raw_call_type
+
+        user_name = record.get("user_name", "N/A")
+        duration  = record.get("duration", "N/A")
+
+        detail_lines = [
             "",
             " CALL DETAILS ",
             f"Rep Name          : {user_name}",
-            f"Contact Name      : {contact_name}",
-            f"Date/Time         : {timestamp}",
-            f"Call From         : {call_from}",
-            f"Call To           : {call_to}",
-            f"Lead Owner        : {lead_owner}",
-            f"Opportunity Owner : {opp_owner}",
-            f"Duration          : {duration}",
-        ])
+        ]
+
+        if not is_process_or_offer:
+            contact_name = record.get("contact_name", "N/A")
+            timestamp    = record.get("timestamp", "N/A")
+            call_from    = record.get("call_from", "N/A")
+            call_to      = record.get("call_to", "N/A")
+            lead_owner   = record.get("lead_owner", "N/A")
+            opp_owner    = record.get("opportunity_owner", "N/A")
+            detail_lines.extend([
+                f"Contact Name      : {contact_name}",
+                f"Date/Time         : {timestamp}",
+                f"Call From         : {call_from}",
+                f"Call To           : {call_to}",
+                f"Lead Owner        : {lead_owner}",
+                f"Opportunity Owner : {opp_owner}",
+            ])
+
+        detail_lines.append(f"Duration          : {duration}")
+        lines.extend(detail_lines)
 
     lines.extend([
         "",
