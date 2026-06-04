@@ -518,88 +518,148 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
     overall   = a.get("overall_score", "N/A")
     grade     = a.get("grade", "N/A")
 
-    lines = [
-        f"CALL QUALITY ANALYSIS — {call_type}",
-        f"Overall Score: {overall}/10  |  Grade: {grade}",
-    ]
+    raw_call_type = str(a.get("call_type", "") or "").strip().lower()
+    is_process_or_offer = "process_call" in raw_call_type or "offer_call" in raw_call_type
 
-    if record:
-        raw_call_type = str(a.get("call_type", "") or "").strip().lower()
-        is_process_or_offer = "process_call" in raw_call_type or "offer_call" in raw_call_type
+    if is_process_or_offer and record:
+        missed = a.get("missed_questions", [])
+        missed_lines = [f"• {q}" for q in missed] if missed else ["N/A"]
 
-        user_name = record.get("user_name", "N/A")
-        duration  = record.get("duration", "N/A")
-
-        detail_lines = [
-            "",
+        lines = [
             " CALL DETAILS ",
-            f"Rep Name          : {user_name}",
+            f"Rep Name          : {record.get('user_name', 'N/A')}",
+            f"Call ID           : {record.get('call_id', 'N/A')}",
+            f"Record ID         : {record.get('record_id', 'N/A')}",
+            f"Call Link         : {record.get('call_link') or record.get('audio_url', 'N/A')}",
+            f"Call From         : {record.get('call_from', 'N/A')}",
+            f"Call To           : {record.get('call_to', 'N/A')}",
+            f"Lead Owner        : {record.get('lead_owner', 'N/A')}",
+            f"Opportunity Owner : {record.get('opportunity_owner', 'N/A')}",
+            f"Call Type         : {call_type}",
+            f"Timestamp         : {record.get('timestamp', 'N/A')}",
+            f"Duration          : {record.get('duration', 'N/A')}",
+            f"Overall Score     : {overall}",
+            "",
+            " CALL QUALITY ANALYSIS ",
+            f"Overall Score: {overall}/10  |  Grade: {grade}",
+            "",
+            " CALL SUMMARY ",
+            a.get("call_summary", ""),
+            "",
+            " MISSED QUESTIONS ",
+        ]
+        lines.extend(missed_lines)
+        lines.extend([
+            "",
+            " NEXT BEST ACTION ",
+            a.get("next_best_action", ""),
+            "",
+            " FEEDBACK AND RECOMMENDATIONS ",
+            a.get("rep_feedback", ""),
+            "",
+            " COACHING SUMMARY ",
+            a.get("coaching_summary_for_slack", ""),
+            "",
+            " RAPPORT SUMMARY ",
+            a.get("rapport_connection_summary", ""),
+            "",
+            " OBJECTION BOXING ",
+            a.get("objection_boxing_result", ""),
+            "",
+            " SCORES ",
+            f"Opening / Professionalism : {a.get('opening_score', 'N/A')}",
+            f"Rapport & Connection      : {a.get('rapport_connection_score', 'N/A')}",
+            f"Going Deep                : {a.get('going_deep_score', 'N/A')}",
+            f"Motivation                : {a.get('motivation_score', 'N/A')}",
+            f"Urgency / Timeline        : {a.get('urgency_score', 'N/A')}",
+            f"Property Condition        : {a.get('condition_score', 'N/A')}",
+            f"Price / Equity / Payoff   : {a.get('price_score', 'N/A')}",
+            f"Objection Handling        : {a.get('objection_score', 'N/A')}",
+            f"Clear Next Step           : {a.get('next_step_score', 'N/A')}",
+            f"Expectation Setting       : {a.get('expectation_setting_score', 'N/A')}",
+            f"Offer Delivery            : {a.get('offer_delivery_score', 'N/A')}",
+            f"Objection Handling (Dec)  : {a.get('objection_handling_declined_score', 'N/A')}",
+            f"Urgency Anchor            : {a.get('urgency_anchor_score', 'N/A')}",
+            f"Lead Score                : {a.get('lead_score', 'N/A')}",
+            f"Lead Score Explanation    : {a.get('lead_score_explanation', 'N/A')}",
+            "",
+            " INCOMPLETE CALL REASON ",
+            a.get("incomplete_call_reason", "") or "N/A",
+        ])
+    else:
+        lines = [
+            f"CALL QUALITY ANALYSIS — {call_type}",
+            f"Overall Score: {overall}/10  |  Grade: {grade}",
         ]
 
-        if not is_process_or_offer:
+        if record:
+            user_name    = record.get("user_name", "N/A")
             contact_name = record.get("contact_name", "N/A")
             timestamp    = record.get("timestamp", "N/A")
             call_from    = record.get("call_from", "N/A")
             call_to      = record.get("call_to", "N/A")
             lead_owner   = record.get("lead_owner", "N/A")
             opp_owner    = record.get("opportunity_owner", "N/A")
-            detail_lines.extend([
+            duration     = record.get("duration", "N/A")
+            lines.extend([
+                "",
+                " CALL DETAILS ",
+                f"Rep Name          : {user_name}",
                 f"Contact Name      : {contact_name}",
                 f"Date/Time         : {timestamp}",
                 f"Call From         : {call_from}",
                 f"Call To           : {call_to}",
                 f"Lead Owner        : {lead_owner}",
                 f"Opportunity Owner : {opp_owner}",
+                f"Duration          : {duration}",
             ])
 
-        detail_lines.append(f"Duration          : {duration}")
-        lines.extend(detail_lines)
+        missed = a.get("missed_questions", [])
+        missed_lines = [f"• {q}" for q in missed] if missed else ["N/A"]
+        lines.extend([
+            "",
+            " CALL SUMMARY ",
+            a.get("call_summary", ""),
+            "",
+            " MISSED QUESTIONS ",
+        ])
+        lines.extend(missed_lines)
+        lines.extend([
+            "",
+            " NEXT BEST ACTION ",
+            a.get("next_best_action", ""),
+            "",
+            " FEEDBACK AND RECOMMENDATIONS ",
+            a.get("rep_feedback", ""),
+            "",
+            " COACHING SUMMARY ",
+            a.get("coaching_summary_for_slack", ""),
+            "",
+            " RAPPORT SUMMARY ",
+            a.get("rapport_connection_summary", ""),
+            "",
+            " OBJECTION BOXING ",
+            a.get("objection_boxing_result", ""),
+            "",
+            " SCORES ",
+            f"Opening / Professionalism : {a.get('opening_score', 'N/A')}",
+            f"Rapport & Connection      : {a.get('rapport_connection_score', 'N/A')}",
+            f"Going Deep                : {a.get('going_deep_score', 'N/A')}",
+            f"Motivation                : {a.get('motivation_score', 'N/A')}",
+            f"Urgency / Timeline        : {a.get('urgency_score', 'N/A')}",
+            f"Property Condition        : {a.get('condition_score', 'N/A')}",
+            f"Price / Equity / Payoff   : {a.get('price_score', 'N/A')}",
+            f"Objection Handling        : {a.get('objection_score', 'N/A')}",
+            f"Clear Next Step           : {a.get('next_step_score', 'N/A')}",
+            f"Expectation Setting       : {a.get('expectation_setting_score', 'N/A')}",
+            f"Offer Delivery            : {a.get('offer_delivery_score', 'N/A')}",
+            f"Objection Handling (Dec)  : {a.get('objection_handling_declined_score', 'N/A')}",
+            f"Urgency Anchor            : {a.get('urgency_anchor_score', 'N/A')}",
+            "",
+            " INCOMPLETE CALL REASON ",
+            a.get("incomplete_call_reason", "") or "N/A",
+        ])
 
-    lines.extend([
-        "",
-        " CALL SUMMARY ",
-        a.get("call_summary", ""),
-        "",
-        " SCORES ",
-        f"Opening / Professionalism : {a.get('opening_score', 'N/A')}",
-        f"Rapport & Connection      : {a.get('rapport_connection_score', 'N/A')}",
-        f"Going Deep                : {a.get('going_deep_score', 'N/A')}",
-        f"Motivation                : {a.get('motivation_score', 'N/A')}",
-        f"Urgency / Timeline        : {a.get('urgency_score', 'N/A')}",
-        f"Property Condition        : {a.get('condition_score', 'N/A')}",
-        f"Price / Equity / Payoff   : {a.get('price_score', 'N/A')}",
-        f"Objection Handling        : {a.get('objection_score', 'N/A')}",
-        f"Clear Next Step           : {a.get('next_step_score', 'N/A')}",
-        f"Expectation Setting       : {a.get('expectation_setting_score', 'N/A')}",
-        f"Offer Delivery            : {a.get('offer_delivery_score', 'N/A')}",
-        f"Objection Handling (Dec)  : {a.get('objection_handling_declined_score', 'N/A')}",
-        f"Urgency Anchor            : {a.get('urgency_anchor_score', 'N/A')}",
-        "",
-        " FEEDBACK & RECOMMENDATIONS ",
-        a.get("rep_feedback", ""),
-        "",
-        " RAPPORT SUMMARY ",
-        a.get("rapport_connection_summary", ""),
-        "",
-        " OBJECTION BOXING ",
-        a.get("objection_boxing_result", ""),
-        "",
-        " INCOMPLETE CALL REASON ",
-        a.get("incomplete_call_reason", ""),
-        "",
-        " COACHING SUMMARY ",
-        a.get("coaching_summary_for_slack", ""),
-        "",
-        " NEXT BEST ACTION ",
-        a.get("next_best_action", ""),
-    ])
-
-    missed = a.get("missed_questions", [])
-    if missed:
-        lines += ["", " MISSED QUESTIONS "]
-        lines += [f"• {q}" for q in missed]
-
-    # Filter out None values to prevent join errors
     lines = [str(line) if line is not None else "" for line in lines]
     return "\n".join(lines)
 
