@@ -1,21 +1,30 @@
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime
 
+import anthropic
 import pytz
 from fastapi import APIRouter, Request
+import csv
+import os
+import uuid
 
 from clients.client import get_client
-from config.config import DEFAULT_PHONE, SF_INSTANCE_URL, ELEVEN_LABS_KEY
+from config.config import DEFAULT_PHONE, SF_INSTANCE_URL, ELEVEN_LABS_KEY, ANTHROPIC_API_KEY
 from config.database import (
     create_call_log,
+    get_active_prompt_text,
     get_connection,
     get_row_limit,
     update_call_log,
     get_call_log,
     can_retry_on_voicemail,
     increment_voicemail_retry_count,
+    add_conversation_message,
+    get_recent_conversation_messages,
+    CONVERSATION_HISTORY_LIMIT,
 )
 from repositories.google_sheets_repository import log_to_sheets, update_sheet_row
 from services.area_service import get_area_mapping
@@ -30,6 +39,9 @@ logging.basicConfig(
 Router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Temporary CSV for debugging Claude (Anthropic) I/O. User will remove manually.
+CLAUDE_IO_CSV = "/tmp/claude_io_debug.csv"
+
 
 #  HELPER: normalise a raw Salesforce phone string 
 
@@ -38,6 +50,263 @@ def _clean_phone(raw: str) -> str:
     if not raw or str(raw).strip().lower() in ("", "restricted", "none"):
         return ""
     return re.sub(r"\D", "", raw)
+
+
+def _extract_json_text(raw: str) -> str:
+    cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned, flags=re.IGNORECASE)
+
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidate = cleaned[start:end + 1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+    raise ValueError("Unable to parse valid JSON from model response")
+
+
+def _load_active_analysis_prompt() -> str:
+    return get_active_prompt_text("extraction")
+
+
+def _normalise_messages(messages: list[dict]) -> list[dict]:
+    """
+    Ensure strict user/assistant alternation by merging consecutive same-role messages.
+    """
+    if not messages:
+        return []
+
+    normalised: list[dict] = []
+    for msg in messages:
+        if normalised and normalised[-1]["role"] == msg["role"]:
+            normalised[-1]["content"] += "\n\n" + msg["content"]
+        else:
+            normalised.append({"role": msg["role"], "content": msg["content"]})
+
+    return normalised
+
+
+async def _generate_analysis_from_transcript(transcript: str, conv_id: str = None, lead_id: str = None) -> dict:
+    prompt_text = _load_active_analysis_prompt()
+    if not prompt_text:
+        logger.warning("No active analysis prompt found")
+        return {}
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    # Build the conversation messages from persistent history for extraction (prompt_id=2)
+    history = get_recent_conversation_messages(limit=CONVERSATION_HISTORY_LIMIT, prompt_id=2)
+    messages: list[dict] = []
+    for row in history:
+        role = "user" if row["message_from"] in ("user", "system") else "assistant"
+        messages.append({"role": role, "content": row["message"]})
+
+    current_prompt = (
+        "Transcript:\n\n" + transcript +
+        "\n\nReturn only valid JSON using the schema defined in the system prompt. "
+        "Do not include markdown fences or commentary."
+    )
+
+    # Append current user turn
+    messages.append({"role": "user", "content": current_prompt})
+    messages = _normalise_messages(messages)
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2048,
+        system=prompt_text,
+        messages=messages,
+    )
+    raw = (message.content[0].text or "").strip()
+    parsed_payload = {}
+    parse_success = False
+    parse_error = None
+    try:
+        json_text = _extract_json_text(raw)
+        parsed = json.loads(json_text)
+        if isinstance(parsed, dict):
+            parsed_payload = parsed
+            parse_success = True
+    except Exception as exc:
+        parse_error = str(exc)
+        logger.error("Failed to parse transcript-generated analysis: %s", exc)
+        logger.debug("Transcript analysis raw response: %s", raw)
+
+    # Persist both turns to conversation history (prompt_id=2) and append debug row to CSV
+    try:
+        try:
+            add_conversation_message("user", current_prompt, prompt_id=2)
+        except Exception:
+            logger.exception("Failed to persist user conversation message for extraction prompt")
+        write_header = not os.path.exists(CLAUDE_IO_CSV)
+        row_id = str(uuid.uuid4())
+        with open(CLAUDE_IO_CSV, "a", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            if write_header:
+                writer.writerow([
+                    "timestamp",
+                    "row_id",
+                    "conv_id",
+                    "lead_id",
+                    "system_prompt",
+                    "transcript",
+                    "raw_response",
+                    "parse_success",
+                    "parse_error",
+                    "parsed_json",
+                ])
+
+            writer.writerow([
+                datetime.utcnow().isoformat(),
+                row_id,
+                conv_id or "",
+                lead_id or "",
+                (prompt_text[:2000] + "...") if prompt_text and len(prompt_text) > 2000 else (prompt_text or ""),
+                (transcript[:2000] + "...") if transcript and len(transcript) > 2000 else (transcript or ""),
+                (raw[:4000] + "...") if raw and len(raw) > 4000 else raw,
+                "1" if parse_success else "0",
+                parse_error or "",
+                json.dumps(parsed_payload, ensure_ascii=False) if parsed_payload else "",
+            ])
+    except Exception as csv_exc:
+        logger.error("Failed to write Claude IO debug CSV: %s", csv_exc, exc_info=True)
+
+    # Persist assistant response as well (best-effort)
+    try:
+        add_conversation_message("assistant", raw, prompt_id=2)
+    except Exception:
+        logger.exception("Failed to persist assistant conversation message for extraction prompt")
+
+    return parsed_payload
+
+
+def _analysis_field_from_payload(payload: dict, key: str):
+    key_map = {
+        "is_looking_to_sell": "Are they looking to sell?",
+        "is_interested": "is_interested",
+        "motivation": "Motivation",
+        "fair_cash_price": "Fair Cash Price",
+        "roadblocks": "Roadblocks",
+        "influencer": "Influencer",
+        "timeline": "timeline",
+        "condition": "condition",
+        "next_steps": "next_steps",
+        "change_of_mind_reason": "change_of_mind_reason",
+        "checkback_time": "checkback_time",
+        "lead_score": "lead_score",
+        "wrong_call": "wrong_call",
+    }
+    field_name = key_map.get(key, key)
+
+    data_collection = payload.get("analysis", {}).get("data_collection_results", {})
+    if field_name in data_collection:
+        field = data_collection.get(field_name, {})
+        return field.get("value"), True
+
+    structured = payload.get("analysis", {}).get("structured_data", {})
+    if field_name in structured:
+        return structured.get(field_name), True
+
+    return None, False
+
+
+def _build_analysis(payload: dict, generated: dict) -> dict:
+    keys = [
+        "is_looking_to_sell",
+        "is_interested",
+        "motivation",
+        "fair_cash_price",
+        "roadblocks",
+        "influencer",
+        "timeline",
+        "condition",
+        "next_steps",
+        "change_of_mind_reason",
+        "checkback_time",
+        "lead_score",
+        "wrong_call",
+    ]
+
+    analysis = {}
+    for key in keys:
+        value, present = _analysis_field_from_payload(payload, key)
+        if present:
+            if value is None or (isinstance(value, str) and value.strip() == ""):
+                analysis[key] = None
+            else:
+                analysis[key] = value
+        else:
+            analysis[key] = generated.get(key)
+
+    # preserve metadata-based transfer if present, otherwise use generated if any
+    transfer_used = (
+        payload.get("metadata", {})
+               .get("features_usage", {})
+               .get("transfer_to_number", {})
+               .get("used")
+    )
+    if transfer_used is not None:
+        analysis["call_transferred"] = str(transfer_used)
+    else:
+        analysis["call_transferred"] = (
+            None if generated.get("call_transferred") is None else str(generated.get("call_transferred"))
+        )
+
+    transcript_summary = payload.get("analysis", {}).get("transcript_summary")
+    if transcript_summary is not None:
+        analysis["call_summary"] = transcript_summary or None
+    else:
+        analysis["call_summary"] = generated.get("call_summary")
+
+    evaluation_results = payload.get("analysis", {}).get("evaluation_criteria_results", {})
+    call_interrupted = evaluation_results.get("call_interupted", {}).get("result", "")
+    frustrated_with_ai = evaluation_results.get("frustrated_with_ai", {}).get("result", "")
+    analysis["call_interrupted"] = call_interrupted
+    analysis["frustrated_with_ai"] = frustrated_with_ai
+
+    return analysis
+
+
+def _needs_generated_analysis(payload: dict) -> bool:
+    if not payload.get("analysis"):
+        return True
+
+    keys = [
+        "is_looking_to_sell",
+        "is_interested",
+        "motivation",
+        "fair_cash_price",
+        "roadblocks",
+        "influencer",
+        "timeline",
+        "condition",
+        "next_steps",
+        "change_of_mind_reason",
+        "checkback_time",
+        "lead_score",
+        "wrong_call",
+    ]
+
+    for key in keys:
+        if not _analysis_field_from_payload(payload, key)[1]:
+            return True
+
+    if "transcript_summary" not in payload.get("analysis", {}):
+        return True
+
+    evaluation_results = payload.get("analysis", {}).get("evaluation_criteria_results", {})
+    if "call_interupted" not in evaluation_results or "frustrated_with_ai" not in evaluation_results:
+        return True
+
+    return False
 
 
 #  CELERY ENTRY: called by process_sheet() for salesforce_job 
@@ -427,56 +696,13 @@ async def sf_post_call(request: Request):
             call_disposition = "Answered"
 
         #  ANALYSIS FIELDS 
-        def get_field(key):
-            dc_val = (
-                payload.get("analysis", {})
-                       .get("data_collection_results", {})
-                       .get(key, {})
-                       .get("value")
-            )
-            if dc_val is not None:
-                return dc_val
-            return (
-                payload.get("analysis", {})
-                       .get("structured_data", {})
-                       .get(key)
-            )
+        generated_analysis = {}
+        if _needs_generated_analysis(payload):
+            generated_analysis = await _generate_analysis_from_transcript(transcript_str, conv_id=conv_id, lead_id=lead_id)
 
-        evaluation_results = payload.get("analysis", {}).get("evaluation_criteria_results", {})
-        call_interrupted   = evaluation_results.get("call_interupted", {}).get("result", "")
-        frustrated_with_ai = evaluation_results.get("frustrated_with_ai", {}).get("result", "")
-        transcript_summary = payload.get("analysis", {}).get("transcript_summary", "")
-
-        print(f"[DEBUG] transcript_summary = {transcript_summary!r}")
-        print(f"[DEBUG] raw lead_score (data_collection) = {payload.get('analysis', {}).get('data_collection_results', {}).get('lead_score', {})!r}")
-        print(f"[DEBUG] raw lead_score (structured_data) = {payload.get('analysis', {}).get('structured_data', {}).get('lead_score')!r}")
-
-        analysis = {
-            "is_looking_to_sell":    get_field("Are they looking to sell?"),
-            "is_interested":         get_field("is_interested"),
-            "motivation":            get_field("Motivation"),
-            "fair_cash_price":       get_field("Fair Cash Price"),
-            "roadblocks":            get_field("Roadblocks"),
-            "influencer":            get_field("Influencer"),
-            "timeline":              get_field("timeline"),
-            "condition":             get_field("condition"),
-            "next_steps":            get_field("next_steps"),
-            "change_of_mind_reason": get_field("change_of_mind_reason"),
-            "checkback_time":        get_field("checkback_time"),
-            "lead_score":            get_field("lead_score"),
-            "wrong_call":            get_field("wrong_call"),
-            "call_transferred":      str(
-                payload.get("metadata", {})
-                       .get("features_usage", {})
-                       .get("transfer_to_number", {})
-                       .get("used")
-            ),
-            "call_summary":          transcript_summary,
-            "call_interrupted":      call_interrupted,
-            "frustrated_with_ai":    frustrated_with_ai,
-            "voicemail_detected":    voicemail_detected,
-            "call_disposition":      call_disposition,
-        }
+        analysis = _build_analysis(payload, generated_analysis)
+        analysis["voicemail_detected"] = voicemail_detected
+        analysis["call_disposition"] = call_disposition
 
         #  UPDATE SALESFORCE 
         access_token = await get_sf_access_token()

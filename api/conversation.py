@@ -14,6 +14,7 @@ from config.database import (
     get_all_conversation_messages,
     get_recent_conversation_messages,
     get_connection,
+    get_active_prompt_text,
     CONVERSATION_HISTORY_LIMIT,
 )
 from core.security import verify_admin
@@ -43,17 +44,7 @@ class MessageResponse(BaseModel):
 
 def _load_active_system_prompt() -> str:
     """Load the active system prompt from the DB (same as smrt_webhook uses)."""
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT prompt_text FROM prompts WHERE active=TRUE ORDER BY id LIMIT 1"
-            ).fetchone()
-            if row and row["prompt_text"]:
-                return row["prompt_text"]
-    except Exception as exc:
-        logger.warning("Failed to load active prompt from DB: %s", exc)
-
-    return "insert prompt here"
+    return get_active_prompt_text("rubrics")
 
 
 def _normalise_messages(messages: list[dict]) -> list[dict]:

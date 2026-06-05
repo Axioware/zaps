@@ -20,6 +20,7 @@ from config.database import (
     get_connection,
     add_conversation_message,
     get_recent_conversation_messages,
+    get_active_prompt_text,
     CONVERSATION_HISTORY_LIMIT,
 )
 from services.salesforce_service import get_sf_access_token
@@ -278,15 +279,9 @@ def _extract_json_text(raw: str) -> str:
 
 
 def _load_active_system_prompt() -> str:
-    try:
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT prompt_text FROM prompts WHERE active=TRUE ORDER BY id LIMIT 1"
-            ).fetchone()
-            if row and row["prompt_text"]:
-                return row["prompt_text"]
-    except Exception as exc:
-        logger.warning("Failed to load active prompt from DB: %s", exc)
+    prompt_text = get_active_prompt_text("rubrics")
+    if prompt_text:
+        return prompt_text
 
     logger.warning("Using fallback default scoring prompt")
     return "insert prompt here"
@@ -337,7 +332,7 @@ async def _score_with_claude(transcript: str) -> dict:
     # ------------------------------------------------------------------
     # Build messages array from persistent conversation history
     # ------------------------------------------------------------------
-    history = get_recent_conversation_messages()  # uses CONVERSATION_HISTORY_LIMIT (50)
+    history = get_recent_conversation_messages(prompt_id=1, include_null=True)  # uses CONVERSATION_HISTORY_LIMIT (50); rubrics or NULL
 
     messages: list[dict] = []
     for row in history:
@@ -366,8 +361,8 @@ async def _score_with_claude(transcript: str) -> dict:
     # Persist both turns to conversation history
     # ------------------------------------------------------------------
     try:
-        add_conversation_message("user", current_prompt)
-        add_conversation_message("assistant", raw)
+            add_conversation_message("user", current_prompt, prompt_id=1)
+            add_conversation_message("assistant", raw, prompt_id=1)
     except Exception as exc:
         # Non-fatal — log but don't abort the scoring pipeline
         logger.error("Failed to persist conversation messages: %s", exc)
@@ -483,8 +478,6 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
         )
         records = res.json().get("records", [])
         if records:
-            sf_id  = records[0]["Id"]
-            sf_url = f"{SF_INSTANCE_URL}/lightning/r/Contact/{sf_id}/view"
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
             logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["lead_owner"])
 

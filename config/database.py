@@ -59,6 +59,21 @@ def get_connection():
             conn.close()
 
 
+def get_active_prompt_text(prompt_type: str = "rubrics") -> str:
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT prompt_text FROM prompts WHERE active=TRUE AND type=%s ORDER BY id LIMIT 1",
+                (prompt_type,),
+            ).fetchone()
+            if row and row["prompt_text"]:
+                return row["prompt_text"]
+    except Exception as exc:
+        logger.warning("Failed to load active prompt from DB: %s", exc)
+
+    return "insert prompt here"
+
+
 def init_db():
     print('Initializing database...')
     with get_connection() as conn:
@@ -179,6 +194,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS prompts (
             id SERIAL PRIMARY KEY,
             prompt_text TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'rubrics',
             active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -187,14 +203,19 @@ def init_db():
 
         # Insert default prompt if table is empty
         conn.execute("""
-        INSERT INTO prompts (prompt_text, active) 
-        SELECT %s, TRUE 
+        INSERT INTO prompts (prompt_text, type, active) 
+        SELECT %s, 'rubrics', TRUE 
         WHERE NOT EXISTS (SELECT 1 FROM prompts)
         """, ("insert prompt here",))
 
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_prompts_active
         ON prompts(active)
+        """)
+
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prompts_type
+        ON prompts(type)
         """)
 
         #  CALL LOGS 
@@ -232,6 +253,11 @@ def init_db():
         """)
 
         conn.execute("""
+        ALTER TABLE prompts ADD COLUMN IF NOT EXISTS
+        type TEXT NOT NULL DEFAULT 'rubrics'
+        """)
+
+        conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_call_logs_conversation_id
         ON call_logs(conversation_id)
         """)
@@ -251,6 +277,11 @@ def init_db():
         """)
 
         conn.execute("""
+        ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS
+        prompt_id INTEGER
+        """)
+
+        conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_conversation_messages_id
         ON conversation_messages(id)
         """)
@@ -263,7 +294,7 @@ def init_db():
 # Conversation message helpers
 # ---------------------------------------------------------------------------
 
-def add_conversation_message(message_from: str, message: str) -> int:
+def add_conversation_message(message_from: str, message: str, prompt_id: int | None = None) -> int:
     """
     Insert a new conversation message row.
 
@@ -276,14 +307,24 @@ def add_conversation_message(message_from: str, message: str) -> int:
     """
     try:
         with get_connection() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO conversation_messages (message_from, message)
-                VALUES (%s, %s)
-                RETURNING id
-                """,
-                (message_from, message),
-            )
+            if prompt_id is None:
+                cur = conn.execute(
+                    """
+                    INSERT INTO conversation_messages (message_from, message)
+                    VALUES (%s, %s)
+                    RETURNING id
+                    """,
+                    (message_from, message),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    INSERT INTO conversation_messages (message_from, message, prompt_id)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (message_from, message, prompt_id),
+                )
             row = cur.fetchone()
             conn.commit()
             new_id = row["id"]
@@ -313,7 +354,7 @@ def get_all_conversation_messages() -> list[dict]:
         raise
 
 
-def get_recent_conversation_messages(limit: int = CONVERSATION_HISTORY_LIMIT) -> list[dict]:
+def get_recent_conversation_messages(limit: int = CONVERSATION_HISTORY_LIMIT, prompt_id: int | None = None, include_null: bool = False) -> list[dict]:
     """
     Return the most recent `limit` messages ordered oldest → newest
     (so they can be fed directly into the Claude messages array in order).
@@ -327,21 +368,52 @@ def get_recent_conversation_messages(limit: int = CONVERSATION_HISTORY_LIMIT) ->
     """
     try:
         with get_connection() as conn:
-            # Fetch last N rows descending, then re-order ascending so
-            # the caller always receives them in chronological order.
-            cur = conn.execute(
-                """
-                SELECT id, message_from, message, created_at
-                FROM (
+            # Build query depending on whether a prompt_id filter is requested.
+            if prompt_id is None:
+                cur = conn.execute(
+                    """
                     SELECT id, message_from, message, created_at
-                    FROM conversation_messages
-                    ORDER BY id DESC
-                    LIMIT %s
-                ) sub
-                ORDER BY id ASC
-                """,
-                (limit,),
-            )
+                    FROM (
+                        SELECT id, message_from, message, created_at
+                        FROM conversation_messages
+                        ORDER BY id DESC
+                        LIMIT %s
+                    ) sub
+                    ORDER BY id ASC
+                    """,
+                    (limit,),
+                )
+            else:
+                if include_null:
+                    cur = conn.execute(
+                        """
+                        SELECT id, message_from, message, created_at
+                        FROM (
+                            SELECT id, message_from, message, created_at
+                            FROM conversation_messages
+                            WHERE prompt_id = %s OR prompt_id IS NULL
+                            ORDER BY id DESC
+                            LIMIT %s
+                        ) sub
+                        ORDER BY id ASC
+                        """,
+                        (prompt_id, limit),
+                    )
+                else:
+                    cur = conn.execute(
+                        """
+                        SELECT id, message_from, message, created_at
+                        FROM (
+                            SELECT id, message_from, message, created_at
+                            FROM conversation_messages
+                            WHERE prompt_id = %s
+                            ORDER BY id DESC
+                            LIMIT %s
+                        ) sub
+                        ORDER BY id ASC
+                        """,
+                        (prompt_id, limit),
+                    )
             rows = cur.fetchall()
             return [dict(row) for row in rows]
     except Exception as e:

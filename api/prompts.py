@@ -9,17 +9,20 @@ router = APIRouter(prefix="/prompts", tags=["Prompts"])
 
 class PromptCreate(BaseModel):
     prompt_text: str
+    type: str = "rubrics"
     active: bool = True
 
 
 class PromptUpdate(BaseModel):
     prompt_text: str | None = None
+    type: str | None = None
     active: bool | None = None
 
 
 class PromptResponse(BaseModel):
     id: int
     prompt_text: str
+    type: str
     active: bool
     created_at: str
     updated_at: str
@@ -31,13 +34,14 @@ async def get_prompts():
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT id, prompt_text, active, created_at, updated_at FROM prompts ORDER BY id DESC"
+                "SELECT id, prompt_text, type, active, created_at, updated_at FROM prompts ORDER BY id DESC"
             ).fetchall()
             
             return [
                 PromptResponse(
                     id=row["id"],
                     prompt_text=row["prompt_text"],
+                    type=row["type"],
                     active=row["active"],
                     created_at=str(row["created_at"]),
                     updated_at=str(row["updated_at"]),
@@ -50,20 +54,22 @@ async def get_prompts():
 
 
 @router.get("/active", response_model=PromptResponse)
-async def get_active_prompt():
-    """Get the first active prompt."""
+async def get_active_prompt(prompt_id: int):
+    """Get a prompt by ID."""
     try:
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT id, prompt_text, active, created_at, updated_at FROM prompts WHERE active=TRUE ORDER BY id LIMIT 1"
+                "SELECT id, prompt_text, type, active, created_at, updated_at FROM prompts WHERE id=%s",
+                (prompt_id,),
             ).fetchone()
             
             if not row:
-                raise HTTPException(status_code=404, detail="No active prompt found")
+                raise HTTPException(status_code=404, detail="Prompt not found")
             
             return PromptResponse(
                 id=row["id"],
                 prompt_text=row["prompt_text"],
+                type=row["type"],
                 active=row["active"],
                 created_at=str(row["created_at"]),
                 updated_at=str(row["updated_at"]),
@@ -71,8 +77,8 @@ async def get_active_prompt():
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching active prompt: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch active prompt")
+        logger.error(f"Error fetching prompt: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch prompt")
 
 
 @router.post("", response_model=PromptResponse)
@@ -81,8 +87,8 @@ async def create_prompt(data: PromptCreate):
     try:
         with get_connection() as conn:
             row = conn.execute(
-                "INSERT INTO prompts (prompt_text, active) VALUES (%s, %s) RETURNING id, prompt_text, active, created_at, updated_at",
-                (data.prompt_text, data.active)
+                "INSERT INTO prompts (prompt_text, type, active) VALUES (%s, %s, %s) RETURNING id, prompt_text, type, active, created_at, updated_at",
+                (data.prompt_text, data.type, data.active)
             ).fetchone()
             
             conn.commit()
@@ -90,6 +96,7 @@ async def create_prompt(data: PromptCreate):
             return PromptResponse(
                 id=row["id"],
                 prompt_text=row["prompt_text"],
+                type=row["type"],
                 active=row["active"],
                 created_at=str(row["created_at"]),
                 updated_at=str(row["updated_at"]),
@@ -121,6 +128,10 @@ async def update_prompt(prompt_id: int, data: PromptUpdate):
                 updates.append("prompt_text=%s")
                 params.append(data.prompt_text)
             
+            if data.type is not None:
+                updates.append("type=%s")
+                params.append(data.type)
+            
             if data.active is not None:
                 updates.append("active=%s")
                 params.append(data.active)
@@ -131,7 +142,7 @@ async def update_prompt(prompt_id: int, data: PromptUpdate):
             updates.append("updated_at=CURRENT_TIMESTAMP")
             params.append(prompt_id)
             
-            query = f"UPDATE prompts SET {', '.join(updates)} WHERE id=%s RETURNING id, prompt_text, active, created_at, updated_at"
+            query = f"UPDATE prompts SET {', '.join(updates)} WHERE id=%s RETURNING id, prompt_text, type, active, created_at, updated_at"
             
             row = conn.execute(query, params).fetchone()
             conn.commit()
@@ -139,6 +150,7 @@ async def update_prompt(prompt_id: int, data: PromptUpdate):
             return PromptResponse(
                 id=row["id"],
                 prompt_text=row["prompt_text"],
+                type=row["type"],
                 active=row["active"],
                 created_at=str(row["created_at"]),
                 updated_at=str(row["updated_at"]),
