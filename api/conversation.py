@@ -65,7 +65,7 @@ def _normalise_messages(messages: list[dict]) -> list[dict]:
     return normalised
 
 
-def _call_claude(user_message: str) -> str:
+def _call_claude(user_message: str, prompt_id: int) -> str:
     """
     Send user_message to Claude with the full recent conversation history
     as context, then return Claude's plain-text reply.
@@ -73,7 +73,10 @@ def _call_claude(user_message: str) -> str:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     system_prompt = _load_active_system_prompt()
 
-    history = get_recent_conversation_messages()  # last CONVERSATION_HISTORY_LIMIT messages
+    history = get_recent_conversation_messages(
+        limit=CONVERSATION_HISTORY_LIMIT,
+        prompt_id=prompt_id,
+    )
 
     messages: list[dict] = []
     for row in history:
@@ -122,7 +125,7 @@ async def get_conversation(prompt_id: int) -> list[dict[str, Any]]:
 
 
 @router.post("/conversation/message", response_model=MessageResponse)
-async def post_conversation_message(body: MessageRequest) -> MessageResponse:
+async def post_conversation_message(body: MessageRequest, prompt_id: int) -> MessageResponse:
     """
     Blake sends a message.
 
@@ -135,15 +138,15 @@ async def post_conversation_message(body: MessageRequest) -> MessageResponse:
         raise HTTPException(status_code=400, detail="message must not be empty")
 
     # Save Blake's message first so it is part of history when Claude replies
-    user_msg_id = add_conversation_message("user", body.message)
+    user_msg_id = add_conversation_message("user", body.message, prompt_id=prompt_id)
 
     try:
-        reply = _call_claude(body.message)
+        reply = _call_claude(body.message, prompt_id=prompt_id)
     except Exception as exc:
         logger.error("Claude API error in conversation endpoint: %s", exc)
         raise HTTPException(status_code=502, detail=f"Claude API error: {exc}") from exc
 
-    assistant_msg_id = add_conversation_message("assistant", reply)
+    assistant_msg_id = add_conversation_message("assistant", reply, prompt_id=prompt_id)
 
     return MessageResponse(
         user_message_id=user_msg_id,
