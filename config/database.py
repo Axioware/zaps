@@ -335,7 +335,7 @@ def add_conversation_message(message_from: str, message: str, prompt_id: int | N
         raise
 
 
-def get_all_conversation_messages() -> list[dict]:
+def get_all_conversation_messages(prompt_id: int | None = None) -> list[dict]:
     """
     Return every row in conversation_messages ordered oldest → newest.
 
@@ -344,9 +344,20 @@ def get_all_conversation_messages() -> list[dict]:
     """
     try:
         with get_connection() as conn:
-            cur = conn.execute(
-                "SELECT id, message_from, message, created_at FROM conversation_messages ORDER BY id ASC"
-            )
+            if prompt_id is None:
+                cur = conn.execute(
+                    "SELECT id, message_from, message, created_at FROM conversation_messages ORDER BY id ASC"
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    SELECT id, message_from, message, created_at
+                    FROM conversation_messages
+                    WHERE prompt_id = %s
+                    ORDER BY id ASC
+                    """,
+                    (prompt_id,),
+                )
             rows = cur.fetchall()
             return [dict(row) for row in rows]
     except Exception as e:

@@ -98,9 +98,9 @@ def _call_claude(user_message: str) -> str:
 # ---------------------------------------------------------------------------
 
 @router.get("/conversation")
-async def get_conversation() -> list[dict[str, Any]]:
+async def get_conversation(prompt_id: int) -> list[dict[str, Any]]:
     """
-    Return every message in conversation history ordered oldest → newest.
+    Return every message for a prompt_id ordered oldest → newest.
 
     Response shape:
         [
@@ -108,7 +108,7 @@ async def get_conversation() -> list[dict[str, Any]]:
             ...
         ]
     """
-    rows = get_all_conversation_messages()
+    rows = get_all_conversation_messages(prompt_id=prompt_id)
     # Convert datetime objects to ISO strings so they serialise cleanly
     return [
         {
