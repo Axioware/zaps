@@ -478,16 +478,17 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
         )
         records = res.json().get("records", [])
         if records:
+            contact_id = records[0]["Id"]
             record["lead_owner"] = (records[0].get("Owner") or {}).get("Name", "")
-            logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone_to, sf_id, record["lead_owner"])
+            logger.info("Contact found for phone %s: ID=%s, Owner=%s", phone_to, contact_id, record["lead_owner"])
 
-            # Try to get linked Opportunity owner via OpportunityContactRole
+            # Try to get linked Opportunity via OpportunityContactRole and post Chatter there
             opp_res = await safe_request(
                 client, "GET", query_url,
                 params={"q": (
                     f"SELECT Opportunity.Id, Opportunity.Owner.Name "
                     f"FROM OpportunityContactRole "
-                    f"WHERE ContactId = '{sf_id}' "
+                    f"WHERE ContactId = '{contact_id}' "
                     f"ORDER BY IsPrimary DESC, Opportunity.CloseDate DESC NULLS LAST, Opportunity.CreatedDate DESC "
                     f"LIMIT 1"
                 )},
@@ -496,10 +497,14 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
             opp_records = opp_res.json().get("records", [])
             if opp_records:
                 opportunity = opp_records[0].get("Opportunity") or {}
+                opp_id = opportunity.get("Id", "")
                 record["opportunity_owner"] = (opportunity.get("Owner") or {}).get("Name", "")
-                logger.info("Linked Opportunity for Contact %s: ID=%s, Owner=%s", sf_id, opportunity.get("Id", ""), record["opportunity_owner"])
+                logger.info("Linked Opportunity for Contact %s: ID=%s, Owner=%s", contact_id, opp_id, record["opportunity_owner"])
+                # Post Chatter on the Opportunity, not the Contact
+                return opp_id, f"{SF_INSTANCE_URL}/lightning/r/Opportunity/{opp_id}/view"
 
-            return sf_id, sf_url
+            # No linked Opportunity — fall back to posting on the Contact
+            return contact_id, f"{SF_INSTANCE_URL}/lightning/r/Contact/{contact_id}/view"
 
     logger.info("No Lead, Opportunity, or Contact found for phone %s", phone_to)
     return None, None
