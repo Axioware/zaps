@@ -512,19 +512,96 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
 
 def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
     record = record or {}
-    call_type = analysis.get("call_type", "unknown").replace("_", " ").title()
 
-    lines = [
-        f"Rep Name          : {record.get('user_name') or 'N/A'}",
-        f"Lead Owner        : {record.get('lead_owner') or 'N/A'}",
-        f"Opportunity Owner : {record.get('opportunity_owner') or 'N/A'}",
-        f"Call Type         : {call_type}",
-        f"Duration          : {record.get('duration') or 'N/A'}",
-        f"Overall Score     : {analysis.get('overall_score') or 'N/A'}",
-    ]
+    raw_call_type = str(analysis.get("call_type", "") or "").strip().lower()
+    if "process" in raw_call_type:
+        call_type_label = "Process Call"
+        is_process, is_offer, is_incomplete = True, False, False
+    elif "offer" in raw_call_type:
+        call_type_label = "Offer Call"
+        is_process, is_offer, is_incomplete = False, True, False
+    elif "incomplete" in raw_call_type:
+        call_type_label = "Incomplete Call"
+        is_process, is_offer, is_incomplete = False, False, True
+    else:
+        call_type_label = raw_call_type.replace("_", " ").title() or "Unknown"
+        is_process, is_offer, is_incomplete = False, False, False
 
-    lines = [str(line) if line is not None else "" for line in lines]
-    return "\n".join(lines)
+    def _val(v):
+        return str(v) if v is not None and v != "" else "N/A"
+
+    sections = []
+
+    # ── CALL DETAILS ─────────────────────────────────────────────────────────
+    sections.append("\n".join([
+        "── CALL DETAILS ──",
+        f"Rep Name          : {_val(record.get('user_name'))}",
+        f"Lead Owner        : {_val(record.get('lead_owner'))}",
+        f"Opportunity Owner : {_val(record.get('opportunity_owner'))}",
+        f"Call Type         : {call_type_label}",
+        f"Duration          : {_val(record.get('duration'))}",
+        f"Overall Score     : {_val(analysis.get('overall_score'))}",
+        f"Lead Score        : {_val(analysis.get('lead_score'))}",
+    ]))
+
+    # ── CALL SUMMARY ─────────────────────────────────────────────────────────
+    call_summary = (analysis.get("call_summary") or "").strip()
+    sections.append(f"── CALL SUMMARY ──\n{call_summary or 'N/A'}")
+
+    # ── MISSED QUESTIONS ─────────────────────────────────────────────────────
+    missed = analysis.get("missed_questions") or []
+    if isinstance(missed, list):
+        missed_str = "; ".join(str(q) for q in missed if q) or "None"
+    else:
+        missed_str = str(missed).strip() or "None"
+    sections.append(f"── MISSED QUESTIONS ──\n{missed_str}")
+
+    # ── NEXT BEST ACTION ─────────────────────────────────────────────────────
+    sections.append(f"── NEXT BEST ACTION ──\n{(analysis.get('next_best_action') or 'N/A').strip()}")
+
+    # ── FEEDBACK AND RECOMMENDATIONS ─────────────────────────────────────────
+    sections.append(f"── FEEDBACK AND RECOMMENDATIONS ──\n{(analysis.get('rep_feedback') or 'N/A').strip()}")
+
+    # ── COACHING SUMMARY ─────────────────────────────────────────────────────
+    sections.append(f"── COACHING SUMMARY ──\n{(analysis.get('coaching_summary_for_slack') or 'N/A').strip()}")
+
+    # ── RAPPORT SUMMARY ──────────────────────────────────────────────────────
+    sections.append(f"── RAPPORT SUMMARY ──\n{(analysis.get('rapport_connection_summary') or 'N/A').strip()}")
+
+    # ── OBJECTION BOXING (offer calls only) ──────────────────────────────────
+    if is_offer:
+        sections.append(f"── OBJECTION BOXING ──\n{(analysis.get('objection_boxing_result') or 'N/A').strip()}")
+
+    # ── SCORES ───────────────────────────────────────────────────────────────
+    if is_process:
+        sections.append("\n".join([
+            "── SCORES ──",
+            f"Opening              : {_val(analysis.get('opening_score'))}",
+            f"Going Deep           : {_val(analysis.get('going_deep_score'))}",
+            f"Motivation           : {_val(analysis.get('motivation_score'))}",
+            f"Urgency              : {_val(analysis.get('urgency_score'))}",
+            f"Condition            : {_val(analysis.get('condition_score'))}",
+            f"Price                : {_val(analysis.get('price_score'))}",
+            f"Objection            : {_val(analysis.get('objection_score'))}",
+            f"Next Step            : {_val(analysis.get('next_step_score'))}",
+            f"Rapport & Connection : {_val(analysis.get('rapport_connection_score'))}",
+        ]))
+    elif is_offer:
+        sections.append("\n".join([
+            "── SCORES ──",
+            f"Expectation Setting      : {_val(analysis.get('expectation_setting_score'))}",
+            f"Rapport & Connection     : {_val(analysis.get('rapport_connection_score'))}",
+            f"Offer Delivery           : {_val(analysis.get('offer_delivery_score'))}",
+            f"Objection Handling       : {_val(analysis.get('objection_handling_declined_score'))}",
+            f"Urgency Anchor           : {_val(analysis.get('urgency_anchor_score'))}",
+            f"Clear Next Step          : {_val(analysis.get('clear_next_step_score'))}",
+        ]))
+
+    # ── INCOMPLETE CALL REASON (incomplete calls only) ───────────────────────
+    if is_incomplete:
+        sections.append(f"── INCOMPLETE CALL REASON ──\n{(analysis.get('incomplete_call_reason') or 'N/A').strip()}")
+
+    return "\n\n".join(sections)
 
 
 async def _post_to_salesforce_chatter(lead_id: str, analysis: dict, record: dict):
