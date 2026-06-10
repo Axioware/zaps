@@ -184,6 +184,7 @@ async def _run_pipeline(record: dict):
         if sf_lead_id:
             record["record_id"] = sf_record_url  # store full URL for Sheets HYPERLINK formula
             await _post_to_salesforce_chatter(sf_lead_id, analysis, record)
+            await _update_salesforce_lead_score(sf_lead_id, sf_record_url, analysis)
         else:
             logger.warning("No Salesforce lead found for call_id=%s", call_id)
 
@@ -630,6 +631,46 @@ async def _post_to_salesforce_chatter(lead_id: str, analysis: dict, record: dict
         )
 
     logger.info("Chatter posted for lead %s | status=%s", lead_id, res.status_code)
+
+
+async def _update_salesforce_lead_score(sf_id: str, sf_record_url: str, analysis: dict) -> None:
+    """PATCH Lead_Score__c on the resolved Salesforce record (Lead or Opportunity)."""
+    lead_score = analysis.get("lead_score")
+    if lead_score is None or lead_score == "":
+        logger.info("No lead_score in analysis — skipping SF Lead_Score__c update for %s", sf_id)
+        return
+
+    # Determine object type from the record URL so we hit the right REST endpoint
+    if "/r/Opportunity/" in (sf_record_url or ""):
+        object_type = "Opportunity"
+    elif "/r/Contact/" in (sf_record_url or ""):
+        object_type = "Contact"
+    else:
+        object_type = "Lead"
+
+    update_url   = f"{SF_INSTANCE_URL}/services/data/v57.0/sobjects/{object_type}/{sf_id}"
+    access_token = await get_sf_access_token()
+
+    try:
+        score_value = float(lead_score)
+    except (TypeError, ValueError):
+        logger.warning("lead_score '%s' is not numeric — skipping SF update for %s", lead_score, sf_id)
+        return
+
+    async with get_client() as client:
+        res = await safe_request(
+            client, "PATCH", update_url,
+            json={"Ai_Lead_Score__c": score_value},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type":  "application/json",
+            },
+        )
+
+    logger.info(
+        "Lead_Score__c updated | %s=%s | score=%.1f | status=%s",
+        object_type, sf_id, score_value, res.status_code,
+    )
 
 
 async def _send_email(analysis: dict, record: dict) -> None:
