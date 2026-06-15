@@ -21,6 +21,7 @@ from config.database import (
     add_conversation_message,
     get_recent_conversation_messages,
     get_active_prompt_text,
+    get_active_prompt_with_id,
     CONVERSATION_HISTORY_LIMIT,
 )
 from services.salesforce_service import get_sf_access_token
@@ -178,19 +179,25 @@ async def _run_pipeline(record: dict):
 
         analysis = await _score_with_claude(transcript)
 
+        agent_analysis: dict = {}
+        try:
+            agent_analysis = await _score_with_claude_agent(transcript) or {}
+        except Exception as exc:
+            logger.error("Agent scoring failed for call_id=%s: %s", call_id, exc)
+
         # use call_from (previously caller) for SF lead resolution
         # returns (sf_id, sf_record_url) so we can build a clickable link in Sheets
         sf_lead_id, sf_record_url = await _resolve_salesforce_lead(record)
         if sf_lead_id:
             record["record_id"] = sf_record_url  # store full URL for Sheets HYPERLINK formula
-            await _post_to_salesforce_chatter(sf_lead_id, analysis, record)
+            await _post_to_salesforce_chatter(sf_lead_id, analysis, record, agent_analysis or None)
             await _update_salesforce_lead_score(sf_lead_id, sf_record_url, analysis)
         else:
             logger.warning("No Salesforce lead found for call_id=%s", call_id)
 
         await _send_email(analysis, record)
 
-        _append_to_google_sheet(record, analysis, transcript)
+        _append_to_google_sheet(record, analysis, transcript, agent_analysis)
 
         logger.info("Pipeline complete for call_id=%s", call_id)
 
@@ -379,6 +386,61 @@ async def _score_with_claude(transcript: str) -> dict:
         raise ValueError(f"Claude JSON parse error: {exc}") from exc
 
 
+async def _score_with_claude_agent(transcript: str) -> dict:
+    """
+    Score a call transcript using Claude with the active 'agent_scoring' prompt.
+
+    Conversation history is stored and retrieved using the real prompt id from the
+    database so the frontend can display it under that prompt, exactly like the
+    'rubrics' flow — just filtered by the agent_scoring prompt_id instead.
+    """
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    system_prompt, prompt_id = get_active_prompt_with_id("agent_scoring")
+    if not system_prompt or system_prompt == "insert prompt here":
+        logger.warning("No active 'agent_scoring' prompt found in DB — skipping agent scoring")
+        return {}
+
+    current_prompt = (
+        "Please score this call transcript and return ONLY valid JSON using the schema defined in the system prompt. "
+        "Do not include any commentary, markdown fences, or extra text. "
+        "If you cannot supply valid JSON, return an empty JSON object {}.\n\n"
+        f"Transcript:\n\n{transcript}"
+    )
+
+    history = get_recent_conversation_messages(prompt_id=prompt_id)
+
+    messages: list[dict] = []
+    for row in history:
+        role = "user" if row["message_from"] in ("user", "system") else "assistant"
+        messages.append({"role": role, "content": row["message"]})
+
+    messages.append({"role": "user", "content": current_prompt})
+    messages = _normalise_messages(messages)
+
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2048,
+        system=system_prompt,
+        messages=messages,
+    )
+
+    raw = (message.content[0].text or "").strip()
+
+    try:
+        add_conversation_message("user", current_prompt, prompt_id=prompt_id)
+        add_conversation_message("assistant", raw, prompt_id=prompt_id)
+    except Exception as exc:
+        logger.error("Failed to persist agent scoring conversation messages: %s", exc)
+
+    try:
+        json_text = _extract_json_text(raw)
+        return json.loads(json_text)
+    except (ValueError, json.JSONDecodeError) as exc:
+        logger.error("Agent scoring Claude returned invalid JSON: %s", raw[:1000])
+        raise ValueError(f"Agent scoring JSON parse error: {exc}") from exc
+
+
 async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None, None]:
     phone_from = record.get("call_from")
     phone_to = record.get("call_to")
@@ -511,7 +573,7 @@ async def _resolve_salesforce_lead(record: dict) -> tuple[str, str] | tuple[None
     return None, None
 
 
-def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
+def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analysis: dict | None = None) -> str:
     record = record or {}
 
     raw_call_type = str(analysis.get("call_type", "") or "").strip().lower()
@@ -602,13 +664,27 @@ def _build_chatter_body(analysis: dict, record: dict | None = None) -> str:
     if is_incomplete:
         sections.append(f"── INCOMPLETE CALL REASON ──\n{(analysis.get('incomplete_call_reason') or 'N/A').strip()}")
 
+    # ── AGENT SCORING ────────────────────────────────────────────────────────
+    if agent_analysis:
+        ag_missed = agent_analysis.get("missed_items", [])
+        if isinstance(ag_missed, list):
+            ag_missed_str = "; ".join(str(i) for i in ag_missed if i) or "None"
+        else:
+            ag_missed_str = str(ag_missed).strip() or "None"
+        sections.append("\n".join([
+            "── AGENT SCORING ──",
+            f"Score          : {_val(agent_analysis.get('score'))}",
+            f"Script Summary : {(agent_analysis.get('script_summary') or 'N/A').strip()}",
+            f"Missed Items   : {ag_missed_str}",
+        ]))
+
     return "\n\n".join(sections)
 
 
-async def _post_to_salesforce_chatter(lead_id: str, analysis: dict, record: dict):
+async def _post_to_salesforce_chatter(lead_id: str, analysis: dict, record: dict, agent_analysis: dict | None = None):
     access_token = await get_sf_access_token()
     chatter_url  = f"{SF_INSTANCE_URL}/services/data/v57.0/chatter/feed-elements"
-    body_text    = _build_chatter_body(analysis, record)
+    body_text    = _build_chatter_body(analysis, record, agent_analysis)
 
     payload = {
         "body": {
@@ -759,6 +835,9 @@ _SHEET_HEADERS = [
     "Missed Questions",
     "Call Transcript",
     "Lead Score Explanation",
+    "score",
+    "script_summary",
+    "missed_items",
 ]
 
 
@@ -769,7 +848,7 @@ def _ensure_header_row(worksheet: gspread.Worksheet) -> None:
         logger.info("Header row written to '%s'", _SMRT_WORKSHEET_NAME)
 
 
-def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> None:
+def _append_to_google_sheet(record: dict, analysis: dict, transcript: str, agent_analysis: dict | None = None) -> None:
     try:
         gc = _get_sheets_client()
         sh = gc.open_by_key(_SMRT_SHEET_ID)
@@ -816,7 +895,7 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         a.get("call_type", ""),               # Call Type
         now,                                  # Timestamp
         record.get("duration", ""),           # Duration (new)
-        a.get("overall_score") if process_fields else "",           # Overall Score
+        a.get("overall_score") if (process_fields or offer_fields) else "",  # Overall Score
         a.get("lead_score") if process_fields else "",                   # Lead Score
         a.get("opening_score") if process_fields else None,               # Opening Score
         a.get("going_deep_score") if process_fields else None,            # Going Deep Score
@@ -847,6 +926,12 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str) -> No
         missed,                               # Missed Questions
         transcript,                           # Call Transcript
         a.get("lead_score_explanation", "") if process_fields else "",  # Lead Score Explanation
+        # Agent scoring columns (AP, AQ, AR)
+        (agent_analysis or {}).get("score", ""),
+        (agent_analysis or {}).get("script_summary", ""),
+        "; ".join((agent_analysis or {}).get("missed_items", []))
+        if isinstance((agent_analysis or {}).get("missed_items"), list)
+        else str((agent_analysis or {}).get("missed_items", "")),
     ]
     print(f"DEBUGGING: APPENDING ROW: {row}")
 
