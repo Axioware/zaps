@@ -120,7 +120,7 @@ async def _generate_analysis_from_transcript(transcript: str, conv_id: str = Non
     messages = _normalise_messages(messages)
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         system=prompt_text,
         messages=messages,
