@@ -672,7 +672,7 @@ def _build_chatter_body(analysis: dict, record: dict | None = None, agent_analys
         else:
             ag_missed_str = str(ag_missed).strip() or "None"
         sections.append("\n".join([
-            "── AGENT SCORING ──",
+            "── Script Adherence ──",
             f"Score          : {_val(agent_analysis.get('score'))}",
             f"Script Summary : {(agent_analysis.get('script_summary') or 'N/A').strip()}",
             f"Missed Items   : {ag_missed_str}",
