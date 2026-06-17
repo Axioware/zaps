@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import resend
+import threading
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -76,13 +77,44 @@ def _get_or_create(call_id: str) -> dict[str, Any]:
 _WHISPER_MODEL: WhisperModel | None = None
 _WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small.en")
 _WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
+_WHISPER_TTL = 3600  # seconds of inactivity before unloading
+_WHISPER_LOCK = threading.Lock()
+_WHISPER_EVICTION_TIMER: threading.Timer | None = None
+
+
+def _evict_whisper_model() -> None:
+    global _WHISPER_MODEL, _WHISPER_EVICTION_TIMER
+    with _WHISPER_LOCK:
+        _WHISPER_MODEL = None
+        _WHISPER_EVICTION_TIMER = None
+    logger.info("Whisper model unloaded after %ds of inactivity", _WHISPER_TTL)
 
 
 def _get_whisper_model() -> WhisperModel:
-    global _WHISPER_MODEL
-    if _WHISPER_MODEL is None:
-        _WHISPER_MODEL = WhisperModel(_WHISPER_MODEL_SIZE, device=_WHISPER_DEVICE)
-        logger.info("Loaded Whisper model %s on %s", _WHISPER_MODEL_SIZE, _WHISPER_DEVICE)
+    global _WHISPER_MODEL, _WHISPER_EVICTION_TIMER
+    with _WHISPER_LOCK:
+        timer_was_running = _WHISPER_EVICTION_TIMER is not None
+        if timer_was_running:
+            _WHISPER_EVICTION_TIMER.cancel()
+
+        cold_start = _WHISPER_MODEL is None
+        if cold_start:
+            logger.info(
+                "Whisper model COLD START — loading %s on %s",
+                _WHISPER_MODEL_SIZE, _WHISPER_DEVICE,
+            )
+            _WHISPER_MODEL = WhisperModel(_WHISPER_MODEL_SIZE, device=_WHISPER_DEVICE)
+            logger.info("Whisper model loaded successfully (cold start complete)")
+        else:
+            logger.info(
+                "Whisper model WARM HIT — already in cache, eviction timer reset to %ds",
+                _WHISPER_TTL,
+            )
+
+        _WHISPER_EVICTION_TIMER = threading.Timer(_WHISPER_TTL, _evict_whisper_model)
+        _WHISPER_EVICTION_TIMER.daemon = True
+        _WHISPER_EVICTION_TIMER.start()
+
     return _WHISPER_MODEL
 
 
