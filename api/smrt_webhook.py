@@ -186,6 +186,8 @@ async def smrt_call_ended(request: Request, background_tasks: BackgroundTasks):
     elif "keyword" in event_type.lower():
         record["keywords"] = payload.get("keywords") or []
 
+    logger.info("processed: %s, completed: %s, transcript_text: %s, audio_url: %s", record["processed"], record["completed"], bool(record["transcript_text"]), record["audio_url"])
+
     ready = (
         not record["processed"]
         and record["completed"]
