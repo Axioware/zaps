@@ -178,6 +178,27 @@ async def _run_pipeline(record: dict):
 
         analysis = await _score_with_claude(transcript)
 
+        # Normalize overall_score to 1-10 if Claude returned a 0-100 value
+        raw_score = analysis.get("overall_score")
+        if raw_score is not None:
+            try:
+                s = float(raw_score)
+                if s > 10:
+                    analysis["overall_score"] = round(s / 10, 1)
+                    logger.info("overall_score normalized: %.1f → %.1f", s, analysis["overall_score"])
+            except (TypeError, ValueError):
+                pass
+
+        # Only run the full pipeline for process calls over 3 minutes
+        raw_call_type = str(analysis.get("call_type", "") or "").strip().lower()
+        duration = float(record.get("duration") or 0)
+        if "process" in raw_call_type and duration < 180:
+            logger.info(
+                "Skipping pipeline — process call under 3 minutes | "
+                "call_id=%s duration=%.1fs", call_id, duration
+            )
+            return
+
         # use call_from (previously caller) for SF lead resolution
         # returns (sf_id, sf_record_url) so we can build a clickable link in Sheets
         sf_lead_id, sf_record_url = await _resolve_salesforce_lead(record)
