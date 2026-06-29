@@ -17,7 +17,7 @@ router = APIRouter()
 SPREADSHEET_ID    = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL      = "claude-sonnet-4-20250514"
+CLAUDE_MODEL      = "claude-sonnet-4-6"
 
 SHEET_LMI  = "LMI Data Extraction"
 SHEET_LMD  = "LMD Data Extraction"

@@ -106,6 +106,23 @@ async def create_prompt(data: PromptCreate):
         raise HTTPException(status_code=500, detail="Failed to create prompt")
 
 
+@router.delete("/{prompt_id}")
+async def delete_prompt(prompt_id: int):
+    """Delete a prompt by ID."""
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("DELETE FROM prompts WHERE id=%s", (prompt_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Prompt not found")
+            conn.commit()
+            return {"deleted": prompt_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting prompt: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete prompt")
+
+
 @router.put("/{prompt_id}", response_model=PromptResponse)
 async def update_prompt(prompt_id: int, data: PromptUpdate):
     """Update a prompt by ID."""

@@ -74,6 +74,25 @@ def get_active_prompt_text(prompt_type: str = "rubrics") -> str:
     return "insert prompt here"
 
 
+def get_active_prompt_with_id(prompt_type: str = "rubrics") -> tuple[str, int | None]:
+    """Return (prompt_text, prompt_id) for the active prompt of the given type.
+
+    Returns ("insert prompt here", None) when no active prompt is found.
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, prompt_text FROM prompts WHERE active=TRUE AND type=%s ORDER BY id LIMIT 1",
+                (prompt_type,),
+            ).fetchone()
+            if row and row["prompt_text"]:
+                return row["prompt_text"], row["id"]
+    except Exception as exc:
+        logger.warning("Failed to load active prompt from DB: %s", exc)
+
+    return "insert prompt here", None
+
+
 def init_db():
     print('Initializing database...')
     with get_connection() as conn:
