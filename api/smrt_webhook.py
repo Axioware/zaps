@@ -858,8 +858,8 @@ _SHEET_HEADERS = [
     "Call Type",
     "Timestamp",
     "Duration",
-    "Overall Score",
     "Lead Score",
+    "Overall Score",
     "Opening Score",
     "Going Deep Score",
     "Motivation Score",
@@ -949,8 +949,8 @@ def _append_to_google_sheet(record: dict, analysis: dict, transcript: str, agent
         a.get("call_type", ""),               # Call Type
         now,                                  # Timestamp
         record.get("duration", ""),           # Duration (new)
-        a.get("overall_score") if (process_fields or offer_fields) else "",  # Overall Score
-        a.get("lead_score") if process_fields else "",                   # Lead Score
+        a.get("lead_score") if process_fields else "",                        # Lead Score (K)
+        a.get("overall_score") if (process_fields or offer_fields) else "",  # Overall Score (L)
         a.get("opening_score") if process_fields else None,               # Opening Score
         a.get("going_deep_score") if process_fields else None,            # Going Deep Score
         a.get("motivation_score") if process_fields else None,            # Motivation Score
