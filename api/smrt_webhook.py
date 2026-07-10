@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 import anthropic
+import av
 import gspread
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -38,6 +39,7 @@ _EMAIL_SUBJECT = "call rubrics"
 
 _SMRT_SHEET_ID        = "1bk-G0lD3P9J6MSBYmMYLHfA-_aQ1FO-BTe0x20V6_Ok"
 _SMRT_WORKSHEET_NAME  = "Scoring Rubrics"
+_MIN_TRANSCRIPTION_DURATION_SECONDS = 180
 
 _call_store: dict[str, dict[str, Any]] = {}
 
@@ -116,6 +118,69 @@ def _get_whisper_model() -> WhisperModel:
         _WHISPER_EVICTION_TIMER.start()
 
     return _WHISPER_MODEL
+
+
+def _parse_duration_seconds(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    if ":" in raw:
+        try:
+            parts = [float(part) for part in raw.split(":")]
+        except ValueError:
+            return None
+
+        seconds = 0.0
+        for part in parts:
+            seconds = seconds * 60 + part
+        return seconds
+
+    match = re.search(r"\d+(?:\.\d+)?", raw)
+    if not match:
+        return None
+
+    return float(match.group(0))
+
+
+def _get_audio_duration_seconds(audio_io: io.BytesIO) -> float | None:
+    try:
+        audio_io.seek(0)
+        with av.open(audio_io, mode="r") as container:
+            if container.duration is not None:
+                return float(container.duration * av.time_base)
+
+            audio_stream = next(
+                (stream for stream in container.streams if stream.type == "audio"),
+                None,
+            )
+            if audio_stream and audio_stream.duration and audio_stream.time_base:
+                return float(audio_stream.duration * audio_stream.time_base)
+    except Exception as exc:
+        logger.warning("Unable to read audio duration metadata: %s", exc)
+    finally:
+        audio_io.seek(0)
+
+    return None
+
+
+def _is_too_short_for_transcription(call_id: str, duration: float | None) -> bool:
+    if duration is None or duration >= _MIN_TRANSCRIPTION_DURATION_SECONDS:
+        return False
+
+    logger.warning(
+        "Audio too short for call_id=%s | duration=%.1f seconds (minimum %ds required)",
+        call_id,
+        duration,
+        _MIN_TRANSCRIPTION_DURATION_SECONDS,
+    )
+    return True
 
 
 @router.post("/call-ended")
@@ -212,6 +277,14 @@ async def _run_pipeline(record: dict):
             return
 
         analysis = await _score_with_claude(transcript)
+        call_type = analysis.get("call_type", None)
+        if not call_type:
+            logger.warning("No call_type returned by Claude for call_id=%s — aborting", call_id)
+            return
+        
+        if call_type not in ['process_call', 'offer_call']:
+            logger.warning("call_type=%s is not 'process_call' or 'offer_call' for call_id=%s — aborting", call_type, call_id)
+            return
 
         # Normalize overall_score to 1-10 if Claude returned a 0-100 value
         raw_score = analysis.get("overall_score")
@@ -225,14 +298,14 @@ async def _run_pipeline(record: dict):
                 pass
 
         # Only run the full pipeline for process calls over 3 minutes
-        raw_call_type = str(analysis.get("call_type", "") or "").strip().lower()
-        duration = float(record.get("duration") or 0)
-        if "process" in raw_call_type and duration < 180:
+        duration = _parse_duration_seconds(record.get("duration")) or 0
+        if duration < _MIN_TRANSCRIPTION_DURATION_SECONDS:
             logger.info(
                 "Skipping pipeline — process call under 3 minutes | "
                 "call_id=%s duration=%.1fs", call_id, duration
             )
             return
+
         agent_analysis: dict = {}
         try:
             agent_analysis = await _score_with_claude_agent(transcript) or {}
@@ -297,22 +370,17 @@ async def _get_transcript(record: dict) -> str | None:
         without_timestamps=True,
     )
 
-    if info.duration < 60:
+    if info.duration < _MIN_TRANSCRIPTION_DURATION_SECONDS:
         logger.warning(
-            "Audio too short for call_id=%s | duration=%.1f seconds (minimum 30s required)",
-            record["call_id"],
+            "Audio too short for transcription: call_id=%s duration=%.1fs (minimum %ds required)",
+            record.get("call_id"),
             info.duration,
+            _MIN_TRANSCRIPTION_DURATION_SECONDS,
         )
         return None
 
     transcript = " ".join(
         segment.text.strip() for segment in segments if segment.text.strip()
-    )
-    logger.info(
-        "Whisper transcription complete for call_id=%s | length=%d | duration=%.1f seconds",
-        record["call_id"],
-        len(transcript),
-        info.duration,
     )
     # Extract and store actual call duration from audio file
     record["duration"] = info.duration
