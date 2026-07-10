@@ -20,3 +20,4 @@ env/
 .DS_Store
 Thumbs.db
 celerybeat-schedule
+zap_env
