@@ -47,8 +47,7 @@ class _PGConn:
 def get_connection():
     conn = None
     try:
-        # conn = psycopg2.connect(os.getenv("POSTGRES_URL"))
-        conn = psycopg2.connect("postgresql://postgres:uncharted3@localhost")
+        conn = psycopg2.connect(os.getenv("POSTGRES_URL"))
         yield _PGConn(conn)
     except Exception as e:
         logger.error(f"Database connection error: {e}")
